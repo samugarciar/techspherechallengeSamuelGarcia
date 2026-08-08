@@ -49,6 +49,10 @@ CREATE TABLE documents (
     supersedes_id   uuid        REFERENCES documents(id) ON DELETE SET NULL,
 
     title           text,
+    -- Páginas del original. Solo el parser las conoce, y el contrato de API las
+    -- publica en el objeto `Documento`. NULL en los formatos sin paginación
+    -- (.docx, .md, .txt): ahí la cita se queda en "archivo › sección".
+    pages           integer,
     uploaded_by     text        NOT NULL DEFAULT 'admin',
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now()
@@ -245,15 +249,28 @@ CREATE TABLE jobs (
     attempts      integer     NOT NULL DEFAULT 0,
     max_attempts  integer     NOT NULL DEFAULT 3,
     last_error    text,
+
+    -- No antes de este instante. Es lo que convierte un reintento en backoff:
+    -- sin esta columna un job que falla vuelve a 'queued' y el worker lo
+    -- reclama en el mismo milisegundo, quemando los 3 intentos en un bucle
+    -- cerrado contra el mismo error. Ver app/db/queue.py:fallar().
+    run_after     timestamptz NOT NULL DEFAULT now(),
+
+    -- Cuándo y quién lo reclamó. `locked_at` hace de claimed_at: un worker que
+    -- muera a media faena deja el job en 'running' para siempre, así que otro
+    -- worker lo recupera por antigüedad. El worker vivo refresca `locked_at` en
+    -- cada cambio de estado (queue.latido) para no ser confundido con un muerto.
     locked_at     timestamptz,
     locked_by     text,
+
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
--- El worker hace: SELECT ... WHERE status='queued' ORDER BY id
---                 FOR UPDATE SKIP LOCKED LIMIT 1
-CREATE INDEX jobs_queued_idx ON jobs (id) WHERE status = 'queued';
+-- Cubre las dos ramas de la reclamación: los 'queued' que ya cumplieron su
+-- backoff y los 'running' abandonados por un worker muerto.
+CREATE INDEX jobs_reclamables_idx ON jobs (run_after, id)
+    WHERE status IN ('queued', 'running');
 
 
 -- ============================================================================

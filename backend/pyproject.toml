@@ -37,6 +37,10 @@ dev = [
     "pytest-asyncio>=0.25",
     "ruff>=0.8",
 ]
+voice = [
+    "pipecat-ai[silero,webrtc]>=0.0.60",
+    "pytest-timeout>=2.3",
+]
 
 [tool.ruff]
 line-length = 100
