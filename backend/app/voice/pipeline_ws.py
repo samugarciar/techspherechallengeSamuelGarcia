@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from fastapi import WebSocket, WebSocketDisconnect
 
 from app.agent.llm_client import LLMClient, Mensaje, RespuestaLLM
 from app.core.config import get_settings
@@ -142,6 +143,17 @@ class MetricasTurno:
     texto_paciente: str = ""
     texto_agente: str = ""
 
+    @property
+    def primer_audio_desde_deteccion_ms(self) -> float:
+        """Lo mismo, descontando la espera de fin de turno.
+
+        Es la cifra comparable con el «presupuesto de latencia» del README, que
+        se midió etapa a etapa y por tanto **no** incluye la detección de turno.
+        Compararlas sin descontarla haría parecer que el pipeline se ha
+        degradado 640 ms cuando lo único que pasa es que ahora se mide algo que
+        antes no se medía."""
+        return self.primer_audio_ms - self.fin_de_turno_ms
+
 
 @dataclass
 class MetricasBargeIn:
@@ -237,6 +249,10 @@ class SesionVoz:
         self._enviar_audio = enviar_audio
         self._enviar_evento = enviar_evento or _sin_eventos
         self._stt = stt or WhisperSTT()
+        # Si el motor viene de fuera lo comparten varias llamadas, así que esta
+        # sesión no puede cerrarlo: cerrar el cliente HTTP de un motor de nube
+        # dejaría muda la llamada siguiente.
+        self._motor_propio = motor_tts is None
         self._motor = motor_tts or crear_motor(get_settings().tts_engine_local)
         self._llm = llm or ClienteLLMFalso()
         self._sistema = sistema
@@ -250,7 +266,18 @@ class SesionVoz:
         self._muestras_recibidas = 0
 
         self._tarea: asyncio.Task | None = None
-        self._agente_hablando = False
+        self._suena_hasta = 0.0
+        """perf_counter en que el agente TERMINARÁ de sonar en el cliente.
+
+        No basta con un booleano puesto a True mientras se emite: el audio se
+        manda tan rápido como se sintetiza (el cliente lo encola), así que el
+        bucle de emisión acaba en milisegundos mientras el paciente sigue oyendo
+        al agente durante segundos. Con un booleano, `_agente_hablando` volvía a
+        False casi al instante y **el barge-in no se detectaba nunca**: se medían
+        0 de 3 interrupciones. El servidor tiene que llevar el reloj de
+        reproducción del cliente, que es justo lo que el transporte de salida de
+        Pipecat hace por su cuenta."""
+
         self._t_voz_paciente = 0.0    # perf_counter del inicio real del turno actual
 
         self.turnos: list[MetricasTurno] = []
@@ -271,8 +298,19 @@ class SesionVoz:
             else:
                 await self._dejo_de_hablar(ev.ms, ev.ms_decision, t_llegada)
 
+        # El agente deja de hablar cuando termina de SONAR, no cuando termina de
+        # sintetizarse. Se comprueba aquí, en el flujo de audio entrante, porque
+        # es lo único que corre continuamente; un temporizador aparte habría que
+        # cancelarlo en cada barge-in.
+        if not self.agente_hablando:
+            self.vad.agente_deja_de_hablar()
+
         if not self.vad.hablando:
             self._recortar_a_preroll()
+
+    @property
+    def agente_hablando(self) -> bool:
+        return time.perf_counter() < self._suena_hasta
 
     def _recortar_a_preroll(self) -> None:
         maximo = int(MS_PREROLL * STT_SAMPLE_RATE / 1000) * 2
@@ -290,7 +328,7 @@ class SesionVoz:
         self._t_voz_paciente = t - retraso_ms / 1000
         await self._enviar_evento({"tipo": "paciente_habla"})
 
-        if self._agente_hablando:
+        if self.agente_hablando:
             await self._barge_in(self._t_voz_paciente)
 
     async def _barge_in(self, t_voz: float) -> None:
@@ -306,7 +344,7 @@ class SesionVoz:
             m.audio_descartado_ms = self.reproductor.vaciar()
         m.ms_hasta_silencio = (time.perf_counter() - t_voz) * 1000
 
-        self._agente_hablando = False
+        self._suena_hasta = time.perf_counter()
         self.vad.agente_deja_de_hablar()
         self.barge_ins.append(m)
 
@@ -378,19 +416,28 @@ class SesionVoz:
             # siguiente vuelta. Sintetizar media frase produce entonaciones
             # cortadas que suenan peor que esperar 12 ms más.
             frases = dividir_en_frases(pendiente)
-            while len(frases) > 1:
-                frase = frases.pop(0)
-                await self._emitir(m, frase, t_fin_voz)
-                emitidas.append(frase)
-            pendiente = frases[0] if frases else ""
+            if len(frases) > 1:
+                for frase in frases[:-1]:
+                    await self._emitir(m, frase, t_fin_voz)
+                    emitidas.append(frase)
+                # El resto se recorta del texto CRUDO, no del troceado: los
+                # trozos vienen con `strip()` aplicado, y reasignar `pendiente`
+                # desde ellos se come el espacio del final. El síntoma es
+                # «graciaspor contármelo» en cuanto el trozo del LLM parte
+                # justo en un espacio, que ocurre continuamente.
+                cola = frases[-1]
+                corte = pendiente.rfind(cola)
+                pendiente = pendiente[corte:] if corte >= 0 else cola
 
         if resto := pendiente.strip():
             await self._emitir(m, resto, t_fin_voz)
             emitidas.append(resto)
 
         m.texto_agente = " ".join(emitidas)
-        self._agente_hablando = False
-        self.vad.agente_deja_de_hablar()
+        # OJO: aquí NO se apaga `agente_hablando`. Se ha terminado de *emitir*,
+        # pero el cliente sigue reproduciendo lo encolado, y durante ese rato el
+        # paciente todavía puede —y suele— interrumpir. Lo apaga `recibir_audio`
+        # cuando el reloj de reproducción se agota.
         await self._enviar_evento({"tipo": "fin_audio", "texto": m.texto_agente})
 
     async def _emitir(self, m: MetricasTurno, frase: str, t_fin_voz: float) -> None:
@@ -400,15 +447,19 @@ class SesionVoz:
         if not m.tts_primera_frase_ms:
             m.tts_primera_frase_ms = ms
 
-        if not self._agente_hablando:
-            self._agente_hablando = True
+        if not self.agente_hablando:
             self.vad.agente_empieza_a_hablar()
             await self._enviar_evento({"tipo": "agente_habla", "texto": frase})
 
         pcm16 = (np.clip(audio.pcm, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
         por_trozo = int(audio.sample_rate * MS_TROZO_SALIDA / 1000) * 2
         for i in range(0, len(pcm16), por_trozo):
-            await self._enviar_audio(pcm16[i : i + por_trozo])
+            trozo = pcm16[i : i + por_trozo]
+            await self._enviar_audio(trozo)
+            # Avanza el reloj de reproducción del cliente: encolar N ms de audio
+            # alarga N ms el rato durante el cual el agente «está hablando».
+            ms_trozo = (len(trozo) // 2) * 1000 / audio.sample_rate
+            self._suena_hasta = max(time.perf_counter(), self._suena_hasta) + ms_trozo / 1000
             if not m.primer_audio_ms:
                 m.primer_audio_ms = (time.perf_counter() - t_fin_voz) * 1000
             # Cede el control: sin esto la emisión monopoliza el event loop y el
@@ -419,7 +470,8 @@ class SesionVoz:
     # -- cierre -------------------------------------------------------------
     async def cerrar(self) -> None:
         await self._cancelar_turno()
-        await self._motor.cerrar()
+        if self._motor_propio:
+            await self._motor.cerrar()
 
 
 async def _sin_eventos(_: dict) -> None:
@@ -455,22 +507,55 @@ class _Conexion:
         await self.ws.send_json(datos)
 
 
-def crear_router():
+def crear_router(
+    *,
+    stt: Any | None = None,
+    motor_tts: TTSEngine | None = None,
+    llm: LLMClient | None = None,
+    params_vad: ParametrosVAD | None = None,
+    sistema: str = "",
+):
     """Devuelve un `APIRouter` con `/ws/voz`.
 
-    Se construye en una función y no a nivel de módulo para no importar FastAPI
-    cuando solo se quiere medir. `app/main.py` es de otro agente: la anotación
-    para que lo monte está en `docs/CONTRATO_API.md` §Cambios sobre el contrato.
-    """
-    from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+    El router se construye en una función y no a nivel de módulo para poder
+    inyectarle dobles en las pruebas. `app/main.py` es de otro agente: la
+    anotación para que lo monte está en `docs/CONTRATO_API.md` §Cambios sobre el
+    contrato.
 
+    El STT y el motor de TTS se crean **una vez aquí**, no por conexión, por dos
+    razones: cargar Kokoro o Whisper en el `accept()` del WebSocket añadiría
+    segundos al inicio de cada llamada, y un motor mal configurado tiene que
+    fallar al arrancar el servidor —donde se ve— y no en mitad de una demo.
+
+    OJO con `WebSocket`: se importa a nivel de módulo, no aquí. Este módulo usa
+    `from __future__ import annotations`, así que las anotaciones son cadenas y
+    FastAPI las resuelve con `get_type_hints()` contra los *globales del módulo*.
+    Con el import dentro de la función, `WebSocket` no está en esos globales,
+    FastAPI no reconoce el parámetro y lo trata como un parámetro de query: el
+    handshake se cierra con un 1008 y `{'loc': ['query','ws'], 'msg': 'Field
+    required'}`, que no dice absolutamente nada sobre la causa real.
+    """
+    from fastapi import APIRouter
+
+    from app.voice.stt import WhisperSTT
+
+    stt = stt or WhisperSTT()
+    motor_tts = motor_tts or crear_motor(get_settings().tts_engine_local)
     router = APIRouter()
 
     @router.websocket("/ws/voz")
     async def voz(ws: WebSocket) -> None:
         await ws.accept()
         conexion = _Conexion(ws)
-        sesion = SesionVoz(enviar_audio=conexion.audio, enviar_evento=conexion.evento)
+        sesion = SesionVoz(
+            enviar_audio=conexion.audio,
+            enviar_evento=conexion.evento,
+            stt=stt,
+            motor_tts=motor_tts,
+            llm=llm,
+            params_vad=params_vad,
+            sistema=sistema,
+        )
         await ws.send_json({"tipo": "listo", "sample_rate_entrada": STT_SAMPLE_RATE,
                             "sample_rate_salida": TTS_SAMPLE_RATE})
         try:

@@ -17,8 +17,12 @@ dist/
 .env.local
 *.key
 
-# Datos subidos por el admin — no van al repo
-storage/documents/*
+# Datos subidos por el admin — no van al repo.
+# El patrón con ** cubre también backend/storage/, que es donde acababan los
+# archivos cuando STORAGE_DIR se resolvía contra el cwd del proceso. Ese bug
+# está arreglado (app/core/config.py), pero el patrón se queda: un PDF con
+# datos de paciente commiteado por accidente no se arregla con un revert.
+**/storage/documents/*
 !storage/documents/.gitkeep
 
 # Artefactos de los spikes (audio generado, modelos descargados)

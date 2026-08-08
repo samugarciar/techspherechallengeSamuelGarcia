@@ -24,6 +24,11 @@ dependencies = [
     "docling>=2.14",
     "pymupdf>=1.25",
     # Voz local (Apple Silicon)
+    # kokoro es el motor del modo `local`, que es el modo POR DEFECTO. Faltaba,
+    # así que crear_motor("kokoro") lanzaba ModuleNotFoundError y el modo local
+    # no arrancaba: la Fase 0 lo midió con `uv run --with kokoro` y nunca llegó
+    # a ser dependencia del proyecto.
+    "kokoro>=0.9",
     "mlx-whisper>=0.4",
     "numpy>=1.26",
     "soundfile>=0.12",

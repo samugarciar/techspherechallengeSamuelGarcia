@@ -47,9 +47,17 @@ def _simular(monkeypatch, fragmentos: list[Fragmento]) -> dict:
         visto["top_k_contexto"] = top_k
         return candidatos[:top_k]
 
+    async def _revalidar(fragmentos):
+        # La revalidación final consulta `retrievable_chunks` de verdad, y estos
+        # fragmentos son dobles sin fila que los respalde. Que esa etapa cumple lo
+        # suyo se prueba en tests/test_robustez_consultas.py, contra Postgres.
+        visto["revalidados"] = len(fragmentos)
+        return fragmentos
+
     monkeypatch.setattr(rag.embeddings, "embeber_consulta", _embeber)
     monkeypatch.setattr(rag, "buscar", _buscar)
     monkeypatch.setattr(rag, "reordenar", _reordenar)
+    monkeypatch.setattr(rag, "revalidar", _revalidar)
     return visto
 
 

@@ -23,7 +23,7 @@ from app.api.deps import exigir_admin
 from app.core.config import get_settings
 from app.rag import embeddings
 from app.rag.rerank import hay_evidencia, reordenar
-from app.rag.retrieval import buscar
+from app.rag.retrieval import buscar, revalidar
 
 router = APIRouter(tags=["rag"], dependencies=[Depends(exigir_admin)])
 
@@ -55,8 +55,14 @@ async def consultar(cuerpo: Consulta) -> dict[str, Any]:
     # cross-encoder tenga entre qué elegir; nunca menos de los pedidos.
     candidatos = await buscar(cuerpo.consulta, vector, max(ajustes.retrieve_top_k, top_k))
     t2 = perf_counter()
-    fragmentos = await reordenar(cuerpo.consulta, candidatos, top_k)
+    reordenados = await reordenar(cuerpo.consulta, candidatos, top_k)
     t3 = perf_counter()
+    # Última etapa, y no es opcional: durante los ~120 ms del cross-encoder el
+    # administrador puede haber borrado el documento, y devolver aquí un fragmento
+    # suyo sería citarle a un paciente un protocolo ya retirado. Ver
+    # `retrieval.revalidar()` para por qué el ON DELETE CASCADE no basta.
+    fragmentos = await revalidar(reordenados)
+    t4 = perf_counter()
 
     return {
         "fragmentos": [
@@ -75,10 +81,13 @@ async def consultar(cuerpo: Consulta) -> dict[str, Any]:
         # decisión la toma el agente de voz, y duplicarla sería garantizar que
         # algún día divergen.
         "hay_evidencia": hay_evidencia(fragmentos),
+        # El contrato publica estas cuatro claves y la consola las pinta; la
+        # revalidación (~1 ms, una consulta por clave primaria) va dentro de
+        # `total` en vez de añadir una quinta que el frontend no espera.
         "ms": {
             "embedding": round((t1 - t0) * 1000),
             "retrieval": round((t2 - t1) * 1000),
             "rerank": round((t3 - t2) * 1000),
-            "total": round((t3 - t0) * 1000),
+            "total": round((t4 - t0) * 1000),
         },
     }

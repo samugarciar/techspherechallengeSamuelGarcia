@@ -67,6 +67,35 @@ DELTA_ENCABEZADO = 0.6
 # una bomba; el admin sube archivos de confianza pero el límite cuesta una línea.
 MAX_BYTES_DOCX = 64 * 1024 * 1024
 
+# Umbral por debajo del cual se considera que un formato binario NO tiene capa de
+# texto de verdad. Existe por un caso concreto y muy probable: un escáner de
+# hospital produce páginas de imagen y estampa encima un pie de página
+# («Hospital General · Página 1 de 2»). Esos 33 caracteres por página bastan para
+# que PyMuPDF «acierte», para que el respaldo con OCR no se dispare nunca y para
+# que el documento entre en la base con un único fragmento que no dice nada. La
+# consola muestra entonces «Listo — el agente ya lo sabe» sobre un protocolo que
+# el agente no ha leído: un fallo silencioso, que es el peor tipo.
+#
+# Se mide por página y no en total porque es la magnitud que discrimina: una
+# página de protocolo real ronda los 2000 caracteres y un sello ronda los 30, así
+# que 120 deja tres órdenes de margen en un sentido y cuatro veces en el otro. El
+# suelo absoluto cubre los formatos sin paginación (.docx) y los PDF de una sola
+# página. No se aplica al texto plano: ahí los bytes SON el texto y la extracción
+# no puede fallar en silencio.
+MIN_CHARS_CAPA_TEXTO = 200
+MIN_CHARS_POR_PAGINA = 120
+
+# Caracteres que se tiran al normalizar. Los de control no significan nada en un
+# protocolo y sí rompen cosas: Postgres rechaza el byte 0x00 dentro de una columna
+# `text`, así que un solo NUL invisible haría fallar el INSERT de la promoción y
+# perdería el documento entero. Los de ancho cero son peores porque no rompen
+# nada: parten «fiebre» en dos tokens para `to_tsvector` y la mitad léxica de la
+# búsqueda deja de encontrar la palabra que dispara la escalada clínica.
+_BASURA = {c: None for c in range(0x20) if c not in (0x09, 0x0A)}   # C0 salvo \t y \n
+_BASURA[0x7F] = None                                                # DEL
+_BASURA.update(dict.fromkeys(range(0x80, 0xA0)))                    # C1
+_BASURA.update(dict.fromkeys((0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF)))  # ancho cero
+
 _NS_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _NIVEL_ESTILO = re.compile(r"^(?:Heading|Ttulo|Titulo|Título)\s*(\d)$", re.IGNORECASE)
 _GUION_FINAL = re.compile(r"(\w)-$")
@@ -91,6 +120,33 @@ class Documento:
 
 class SinTextoExtraible(RuntimeError):
     """El motor abrió el archivo pero no sacó texto: probablemente un escaneado."""
+
+
+class PdfProtegido(RuntimeError):
+    """El PDF pide contraseña.
+
+    Se distingue del resto de fallos porque no tiene respaldo posible: ningún
+    motor va a adivinar la clave, y probar con Docling cuesta ~3 s para acabar
+    diciendo «docling-parse could not load document 4be239a4», que no le sirve de
+    nada a quien tiene que decidir qué hacer con el archivo.
+    """
+
+
+def _exigir_capa_de_texto(markdown: str, paginas: int | None, origen: str) -> None:
+    """Rechaza lo que salió tan escaso que no puede ser el documento de verdad.
+
+    La alternativa era comprobarlo en `ingest`, y se descartó: aquí la excepción
+    hace que `parsear()` pase al motor de respaldo, así que un escaneado se
+    RESCATA con OCR en vez de marcarse 'failed'. Comprobándolo más arriba el
+    respaldo ya no tendría ocasión de entrar.
+    """
+    util = len(markdown.strip())
+    minimo = max(MIN_CHARS_CAPA_TEXTO, MIN_CHARS_POR_PAGINA * (paginas or 0))
+    if util < minimo:
+        raise SinTextoExtraible(
+            f"{origen} apenas tiene capa de texto: {util} caracteres "
+            f"en {paginas or 1} página(s)"
+        )
 
 
 def pagina_de(doc: Documento, offset: int) -> int | None:
@@ -154,8 +210,18 @@ def normalizar(texto: str) -> str:
 
     NFKC y no NFC porque es NFKC quien descompone las ligaduras; de paso unifica
     los espacios duros y los superíndices de las unidades.
+
+    Además se tira la basura invisible (`_BASURA`). NFKC no la toca y hace daño
+    de dos formas distintas: un NUL hace que Postgres rechace el INSERT de la
+    promoción y se pierde el documento entero, y un espacio de ancho cero dentro
+    de «fiebre» no rompe nada pero deja la palabra fuera del índice léxico.
     """
-    return unicodedata.normalize("NFKC", texto)
+    texto = unicodedata.normalize("NFKC", texto)
+    # Antes del filtro: \r es un carácter de control, y borrarlo a secas dejaría
+    # un archivo con saltos de línea al estilo Mac clásico convertido en una
+    # única línea kilométrica.
+    texto = texto.replace("\r\n", "\n").replace("\r", "\n")
+    return texto.translate(_BASURA)
 
 
 def _texto_de_linea(linea: dict) -> tuple[str, float]:
@@ -277,6 +343,14 @@ def pdf_con_pymupdf(path: Path) -> Documento:
     import pymupdf
 
     with pymupdf.open(path) as doc:
+        if doc.needs_pass:
+            # PyMuPDF abre el archivo igualmente y solo revienta al pedir texto,
+            # con un «document closed or encrypted» que no distingue una cosa de
+            # la otra. Preguntarlo aquí convierte el fallo en un aviso concreto.
+            raise PdfProtegido(
+                f"No se pudo leer {path.name}: el PDF está protegido con "
+                f"contraseña. Quítasela y vuelve a subirlo."
+            )
         paginas = list(doc)
         cuerpo = _tamano_cuerpo(paginas)
         niveles = _niveles(paginas, cuerpo)
@@ -291,8 +365,7 @@ def pdf_con_pymupdf(path: Path) -> Documento:
                 largo += len(elemento) + 2
 
         markdown = "\n\n".join(trozos)
-        if not markdown.strip():
-            raise SinTextoExtraible("el PDF no tiene capa de texto")
+        _exigir_capa_de_texto(markdown, doc.page_count, path.name)
         return Documento(markdown, "pymupdf", doc.page_count, saltos)
 
 
@@ -318,9 +391,7 @@ def _docling():
 
 def con_docling(path: Path) -> Documento:
     resultado = _docling().convert(str(path))
-    markdown = resultado.document.export_to_markdown()
-    if not markdown.strip():
-        raise SinTextoExtraible(f"docling no extrajo texto de {path.name}")
+    markdown = normalizar(resultado.document.export_to_markdown())
     paginas = getattr(resultado.document, "num_pages", None)
     if callable(paginas):
         paginas = paginas()
@@ -328,6 +399,10 @@ def con_docling(path: Path) -> Documento:
     # no "cero páginas"; se guarda como NULL para no publicar un dato falso.
     if not isinstance(paginas, int) or paginas <= 0:
         paginas = None
+    # El mismo umbral que en el primario: un OCR que solo reconoce el sello del
+    # escáner no ha leído el documento, y dejarlo pasar aquí sería reintroducir
+    # por la puerta de atrás el fallo silencioso que el primario ya rechaza.
+    _exigir_capa_de_texto(markdown, paginas, f"docling sobre {path.name}")
     # Sin `saltos`: docling no expone el corte de página en el markdown exportado,
     # así que por este camino la cita se queda sin número de página.
     return Documento(markdown, "docling", paginas)
@@ -373,22 +448,23 @@ def docx_minimo(path: Path) -> Documento:
     piezas: list[str] = []
     for nodo in cuerpo:
         if nodo.tag == f"{_NS_W}p":
-            texto = _texto_ooxml(nodo).strip()
+            texto = normalizar(_texto_ooxml(nodo)).strip()
             if not texto:
                 continue
             nivel = _nivel_ooxml(nodo)
             piezas.append(f"{'#' * nivel} {texto}" if nivel else texto)
         elif nodo.tag == f"{_NS_W}tbl":
             filas = [
-                [_texto_ooxml(celda).strip() for celda in fila.iter(f"{_NS_W}tc")]
+                [normalizar(_texto_ooxml(celda)).strip() for celda in fila.iter(f"{_NS_W}tc")]
                 for fila in nodo.iter(f"{_NS_W}tr")
             ]
             if filas:
                 piezas.append(_tabla_markdown(filas))
 
     markdown = "\n\n".join(piezas)
-    if not markdown.strip():
-        raise SinTextoExtraible(f"{path.name} no contiene texto")
+    # Sin paginación: solo cuenta el suelo absoluto. Un .docx que sea una imagen
+    # escaneada pegada en una página produce exactamente cero texto por aquí.
+    _exigir_capa_de_texto(markdown, None, path.name)
     return Documento(markdown, "docx_minimo")
 
 
@@ -413,10 +489,18 @@ def texto_plano(path: Path) -> Documento:
     el troceado lo parte por frases con solape. Inventar encabezados a partir de
     líneas en mayúsculas daría secciones falsas, que en un protocolo clínico es
     peor que no tener ninguna.
+
+    «Tal cual» no incluye saltarse `normalizar()`, aunque lo pareciera: un .md
+    exportado desde Word o pegado desde un PDF trae ligaduras y espacios de ancho
+    cero igual que el PDF del que salió, y sin NFKC ese camino quedaba con una
+    calidad de recuperación distinta a la de los otros dos formatos sin que nada
+    lo delatara. Aquí NO se aplica el umbral de `_exigir_capa_de_texto`: en texto
+    plano los bytes son el texto y la extracción no puede fallar en silencio, así
+    que una nota corta y legítima tiene que poder subirse.
     """
-    texto = path.read_text(encoding="utf-8", errors="replace")
+    texto = normalizar(path.read_text(encoding="utf-8", errors="replace"))
     if not texto.strip():
-        raise SinTextoExtraible(f"{path.name} está vacío")
+        raise SinTextoExtraible(f"El archivo {path.name} está vacío: no hay nada que aprender.")
     return Documento(texto, "texto")
 
 
@@ -455,10 +539,15 @@ def parsear(path: Path, mime: str | None = None) -> Documento:
 
     Cada formato tiene primario y respaldo, y el respaldo salta por dos motivos
     distintos: una excepción (el motor no pudo) o `SinTextoExtraible` (el motor
-    pudo abrirlo pero no había texto). El segundo es el que importa: un PDF
-    escaneado no lanza ninguna excepción en PyMuPDF, simplemente devuelve nada, y
-    sin esta comprobación el documento entraría vacío y el agente creería que ese
-    protocolo no dice nada en vez de avisar de que falló.
+    pudo abrirlo pero no había texto suficiente). El segundo es el que importa:
+    un PDF escaneado no lanza ninguna excepción en PyMuPDF, simplemente devuelve
+    nada o el sello del escáner, y sin esta comprobación el documento entraría
+    vacío y el agente creería que ese protocolo no dice nada en vez de avisar.
+
+    Lo que sale de aquí cuando fallan todos los motores acaba, tal cual, en
+    `documents.error_message` y de ahí a la consola. Por eso el mensaje se
+    redacta para un administrador y no para un log: primero qué pasa y qué hacer,
+    y solo después el detalle técnico, que sirve para depurar pero no se lee.
     """
     path = Path(path)
     formato = formato_de(path, mime)
@@ -471,10 +560,30 @@ def parsear(path: Path, mime: str | None = None) -> Documento:
     )
 
     fallos: list[str] = []
+    solo_falta_texto = True
     for motor in intentos:
         try:
             return motor(path)
+        except PdfProtegido:
+            # No hay respaldo que abra un PDF con contraseña: se propaga tal cual,
+            # que además es el mensaje que hay que enseñar.
+            raise
         except Exception as exc:  # noqa: BLE001 — se prueba el siguiente motor
-            fallos.append(f"{motor.__name__}: {exc}")
+            solo_falta_texto &= isinstance(exc, SinTextoExtraible)
+            # Recortado: los mensajes de Docling son párrafos con hashes dentro y
+            # `ingest` trunca `error_message` a 500 caracteres, así que sin tope
+            # el detalle técnico se comería la frase en español que va delante.
+            fallos.append(f"{motor.__name__}: {str(exc)[:120]}")
 
-    raise RuntimeError(f"ningún motor pudo leer {path.name} — {' | '.join(fallos)}")
+    detalle = " | ".join(fallos)
+    if solo_falta_texto:
+        raise SinTextoExtraible(
+            f"No se pudo extraer texto de {path.name}: parece un documento "
+            f"escaneado (páginas de imagen sin capa de texto) y el OCR de "
+            f"respaldo tampoco sacó nada. Pásale un OCR o súbelo en .docx, .md "
+            f"o .txt. (detalle: {detalle})"
+        )
+    raise RuntimeError(
+        f"No se pudo leer {path.name}: el archivo está dañado o no es un "
+        f"{formato.upper()} válido. (detalle: {detalle})"
+    )

@@ -39,6 +39,12 @@ log = logging.getLogger("ingesta")
 # backoff, que no disparan ninguna notificación.
 ESPERA_VACIO_S = 1.0
 
+# Cada cuánto se buscan documentos cuyo worker murió y ya nadie va a reintentar.
+# Solo se hace con la cola vacía, así que nunca compite con trabajo real; y con
+# este periodo un documento huérfano tarda como mucho ABANDONO + 30 s en dejar de
+# fingir que sigue procesándose.
+BARRIDO_HUERFANOS_S = 30.0
+
 
 async def _procesar(job: queue.Job, worker: str) -> None:
     t0 = time.perf_counter()
@@ -67,12 +73,28 @@ async def _procesar(job: queue.Job, worker: str) -> None:
         await queue.fallar(job.id, resultado.error or "error desconocido")
 
 
+async def _barrer_huerfanos() -> None:
+    """Cierra lo que dejó atrás un worker muerto. Nunca puede tumbar el bucle."""
+    try:
+        for document_id in await ingest.sepultar_abandonados():
+            log.warning("documento %s sepultado: su worker murió y no quedan intentos",
+                        document_id)
+    except Exception:  # noqa: BLE001 — el barrido es mantenimiento, no la faena
+        log.exception("el barrido de huérfanos falló")
+
+
 async def bucle(parar: asyncio.Event, worker: str) -> None:
+    proximo_barrido = 0.0
     while not parar.is_set():
         async with transaction() as conn:
             job = await queue.tomar_trabajo(conn, worker=worker)
 
         if job is None:
+            ahora = time.monotonic()
+            if ahora >= proximo_barrido:
+                proximo_barrido = ahora + BARRIDO_HUERFANOS_S
+                await _barrer_huerfanos()
+
             # `wait_for` en vez de `sleep`: así una señal corta la espera al
             # instante en lugar de dejar el apagado colgado hasta un segundo.
             with contextlib.suppress(TimeoutError):

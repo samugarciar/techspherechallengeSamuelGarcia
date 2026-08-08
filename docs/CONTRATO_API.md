@@ -237,3 +237,33 @@ navegadores mandan `application/octet-stream` para `.md` casi siempre; con el
 mime como fuente primaria un markdown bien estructurado acabaría en el camino del
 PDF y fallaría al abrirlo. La validación de `formato_no_soportado` debería usar
 `app.rag.parsing.formato_de(path, mime)`, que ya implementa esa precedencia.
+
+**5. El bucle de voz necesita dos rutas nuevas en `app/main.py` (agente de voz).**
+No las he añadido yo: `app/main.py` es de otro agente. Están construidas y
+probadas en `app/voice/pipeline_ws.py`; falta montarlas.
+
+| Ruta | Qué es | Cómo se monta |
+|---|---|---|
+| `WS /ws/voz` | Bucle de voz de la Opción B (WebSocket propio). Audio PCM int16 LE mono **16 kHz** del navegador al servidor; PCM int16 LE mono **24 kHz** del servidor al navegador; control en JSON. | `from app.voice.pipeline_ws import crear_router` y `app.include_router(crear_router())` |
+| `POST /api/voz/offer` | Solo si se elige la Opción A (Pipecat + WebRTC). Recibe la oferta SDP y devuelve la respuesta. | `pipecat.transports.smallwebrtc.request_handler` + `app.voice.pipeline_pipecat.crear_transporte_webrtc()` |
+
+`/ws/voz` **no lleva `X-Admin-Token`**: un WebSocket de navegador no puede
+enviar cabeceras. Si hace falta autenticarlo, va por query string igual que el
+SSE de documentos (`?token=…`).
+
+Mensajes de control que manda el servidor por `/ws/voz` (el cliente de prueba en
+`scripts/spikes/cliente_voz/index.html` los implementa todos):
+
+| `tipo` | Cuándo | Qué debe hacer la UI |
+|---|---|---|
+| `listo` | al conectar | guardar `sample_rate_salida` |
+| `paciente_habla` | el VAD detecta voz | indicador «escuchando» |
+| `fin_de_turno` | el paciente calló | indicador «pensando» |
+| `transcripcion` | Whisper terminó | pintar lo que dijo el paciente |
+| `agente_habla` | empieza a salir audio | indicador «hablando» |
+| `parar` | **barge-in** | **vaciar el buffer de audio ya recibido** |
+| `fin_audio` | terminó la respuesta | pintar el texto del agente |
+
+`parar` es obligatorio de implementar: sin vaciar el buffer del cliente, el
+agente sigue sonando lo que le quede encolado (medido: 5,4 s) y el corte del
+servidor no se oye.

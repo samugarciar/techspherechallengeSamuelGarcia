@@ -49,13 +49,13 @@ sys.path.insert(0, str(RAIZ / "backend"))
 AUDIO = Path(__file__).parent / "audio"
 SALIDA = Path(__file__).parent / "out"
 
-from app.voice.pipeline_ws import (  # noqa: E402
+from app.voice.pipeline_ws import (
     ClienteLLMFalso,
     ReproductorSimulado,
     SesionVoz,
 )
-from app.voice.tts import crear_motor  # noqa: E402
-from app.voice.vad import (  # noqa: E402
+from app.voice.tts import crear_motor
+from app.voice.vad import (
     SAMPLE_RATE,
     DetectorTurnos,
     ParametrosVAD,
@@ -65,6 +65,17 @@ from app.voice.vad import (  # noqa: E402
 MS_TROZO_ENTRADA = 20
 """Lo que manda un `AudioWorklet` del navegador por mensaje. Inyectar en trozos
 más grandes escondería la latencia de troceado que sí existe en producción."""
+
+# Pipecat escribe una línea de log por frame enlazado. Con 4 escenarios y 3
+# repeticiones eso son miles de líneas que tapan los números, que es lo único
+# que este script produce.
+try:
+    from loguru import logger as _logger
+
+    _logger.remove()
+    _logger.add(sys.stderr, level="WARNING")
+except ImportError:  # pragma: no cover — loguru viene con Pipecat
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +125,20 @@ class Resultado:
     escenario: str
     opcion: str
     datos: dict = field(default_factory=dict)
+
+
+async def precalentar(motor: str) -> None:
+    """Carga Whisper y arranca el motor de TTS una vez, antes de medir.
+
+    Sin esto la primera medición sale con 2,6 s de STT y 0,9 s de TTS, que son
+    el coste de cargar el modelo y de arrancar el subproceso — un coste real,
+    pero que en producción se paga UNA vez al levantar el servicio, no en cada
+    turno. Medirlo dentro del turno confundiría arranque con latencia.
+    """
+    from app.voice.stt import WhisperSTT
+
+    await asyncio.to_thread(WhisperSTT().precalentar)
+    await crear_motor(motor).sintetizar("Preparando la llamada.")
 
 
 def mediana(xs: list[float]) -> float:
@@ -202,11 +227,10 @@ async def correr_a(
     ttft_ms: float = 400.0,
     cola_extra_s: float = 6.0,
 ):
+    from app.voice.pipeline_pipecat import construir
     from pipecat.frames.frames import EndFrame, StartFrame
     from pipecat.pipeline.runner import PipelineRunner
     from pipecat.pipeline.task import PipelineParams, PipelineTask
-
-    from app.voice.pipeline_pipecat import construir
 
     piezas = construir(
         motor_tts=crear_motor(motor),
@@ -243,6 +267,14 @@ async def correr_a(
 # ---------------------------------------------------------------------------
 # Escenario 1 — un turno completo
 # ---------------------------------------------------------------------------
+MS_FIN_TURNO = 640
+"""Umbral de silencio elegido en el escenario 3. Las dos opciones se miden con
+el MISMO presupuesto de fin de turno: en Pipecat son `stop_secs` (200 ms) más
+`user_speech_timeout` (440 ms), que suman los mismos 640 ms del umbral único de
+la Opción B. Sin igualarlo, la comparación mediría dos ajustes distintos en vez
+de dos orquestadores."""
+
+
 async def escenario_turno(motor: str, repeticiones: int) -> list[Resultado]:
     pcm = con_silencio(cargar("apendicectomia"), 1500)
     _, fin_voz_ms = limites_de_voz(pcm)
@@ -264,10 +296,15 @@ async def escenario_turno(motor: str, repeticiones: int) -> list[Resultado]:
                 acum.setdefault("llm_ttft_ms", []).append(m.llm_ttft_ms)
                 acum.setdefault("tts_1a_frase_ms", []).append(m.tts_primera_frase_ms)
                 acum.setdefault("primer_audio_ms", []).append(m.primer_audio_ms)
+                acum.setdefault("primer_audio_sin_fin_turno_ms", []).append(
+                    m.primer_audio_desde_deteccion_ms
+                )
                 acum.setdefault("audio_emitido_ms", []).append(repro.total_ms_reproducidos)
                 textos.append(m.texto_paciente)
             else:
-                piezas, t0 = await correr_a(pcm, motor=motor)
+                piezas, t0 = await correr_a(
+                    pcm, motor=motor, espera_habla_s=(MS_FIN_TURNO / 1000) - 0.2
+                )
                 s = piezas.sonda
                 t_fin_voz = t0 + fin_voz_ms / 1000
                 if s.t_primer_tts is None:
@@ -282,6 +319,9 @@ async def escenario_turno(motor: str, repeticiones: int) -> list[Resultado]:
                 acum.setdefault("llm_ttft_ms", []).append(piezas.llm.ttft_ms or 0.0)
                 acum.setdefault("tts_1a_frase_ms", []).append(piezas.tts.ms_primera_sintesis or 0.0)
                 acum.setdefault("primer_audio_ms", []).append((s.t_primer_tts - t_fin_voz) * 1000)
+                acum.setdefault("primer_audio_sin_fin_turno_ms", []).append(
+                    (s.t_primer_tts - (s.t_fin_turno or t_fin_voz)) * 1000
+                )
                 acum.setdefault(
                     "audio_emitido_ms", []
                 ).append(piezas.salida.reproductor.total_ms_reproducidos)
@@ -304,7 +344,12 @@ async def escenario_barge_in(motor: str, repeticiones: int) -> list[Resultado]:
     con seguridad dentro de la respuesta del agente: si cayera antes, no habría
     nada que cortar y la medición no significaría nada.
     """
-    MS_INTERRUPCION = 3800
+    # 5.500 ms cae de lleno dentro de la respuesta del agente en las dos
+    # opciones (empieza a hablar sobre los 4.200 ms y habla ~6,7 s). A 3.800 ms
+    # —el primer valor que se probó— la voz entraba ANTES de que el agente
+    # abriera la boca: la Opción B registraba cero barge-ins, no porque fallara,
+    # sino porque no había nada que interrumpir.
+    MS_INTERRUPCION = 5500
     base = con_silencio(cargar("turno_corto"), 6000)
     corte = cargar("interrupcion")
     pcm = mezclar_en(base, corte, MS_INTERRUPCION)
@@ -326,21 +371,20 @@ async def escenario_barge_in(motor: str, repeticiones: int) -> list[Resultado]:
                     cortes_audibles.append(b.ms_hasta_silencio)
                     descartados.append(b.audio_descartado_ms)
             else:
-                piezas, t0 = await correr_a(pcm, motor=motor, cola_extra_s=3.0)
+                piezas, t0 = await correr_a(
+                    pcm,
+                    motor=motor,
+                    cola_extra_s=3.0,
+                    espera_habla_s=(MS_FIN_TURNO / 1000) - 0.2,
+                )
                 s = piezas.sonda
                 t_voz = t0 + inicio_real_ms / 1000
                 if s.t_interrupcion is not None:
                     detectados += 1
                     cortes_servidor.append((s.t_interrupcion - t_voz) * 1000)
-                if s.t_ultimo_tts is not None and s.t_interrupcion is not None:
-                    # El último audio que llegó a sonar. Si el TTS siguió
-                    # emitiendo después de la interrupción, aquí se ve.
-                    fin = max(
-                        piezas.salida.reproductor.t_ultimo_sonido,
-                        s.t_ultimo_tts,
-                    )
-                    cortes_audibles.append((fin - t_voz) * 1000)
-                    descartados.append(piezas.salida.reproductor.ms_descartados)
+                if piezas.salida.t_silencio is not None:
+                    cortes_audibles.append((piezas.salida.t_silencio - t_voz) * 1000)
+                    descartados.append(piezas.salida.ms_descartados_en_corte)
 
         salida.append(
             Resultado(
@@ -501,6 +545,8 @@ async def main() -> None:
     SALIDA.mkdir(exist_ok=True)
     resultados: list[Resultado] = []
     quiere = args.escenario
+    if quiere in ("turno", "barge-in", "todo"):
+        await precalentar(args.tts)
 
     if quiere in ("stt", "todo"):
         resultados += await escenario_stt(args.repeticiones)

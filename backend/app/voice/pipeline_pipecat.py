@@ -93,6 +93,15 @@ class EntradaInyectada(BaseInputTransport):
             )
         )
 
+    async def start(self, frame: StartFrame) -> None:
+        await super().start(frame)
+        # Sin esto no existe `_audio_in_queue` y el primer `push_audio_frame`
+        # revienta con un AttributeError que además se pierde: ocurre dentro de
+        # una tarea del runner, así que el proceso se queda colgado sin traza.
+        # Los transportes reales lo llaman al conectar el cliente; uno inyectado
+        # no tiene cliente, así que se declara listo al arrancar.
+        await self.set_transport_ready(frame)
+
     async def inyectar(self, pcm16: bytes) -> None:
         await self.push_audio_frame(
             InputAudioRawFrame(
@@ -121,7 +130,13 @@ class SalidaMedida(BaseOutputTransport):
         )
         self.reproductor = reproductor or ReproductorSimulado(TTS_SAMPLE_RATE)
         self.t_primer_audio: float | None = None
+        self.t_silencio: float | None = None
+        """Instante en que el audio dejó de sonar por una interrupción. Se
+        congela aquí y no se deduce después: tras el corte llega el audio del
+        turno SIGUIENTE, y mirar «el último audio de la ejecución» mediría eso."""
+        self.ms_descartados_en_corte: float = 0.0
         self.bytes_escritos = 0
+        self._hubo_audio = False
 
     async def start(self, frame: StartFrame) -> None:
         await super().start(frame)
@@ -133,17 +148,23 @@ class SalidaMedida(BaseOutputTransport):
         if self.t_primer_audio is None:
             self.t_primer_audio = time.perf_counter()
         self.bytes_escritos += len(frame.audio)
+        self._hubo_audio = True
         self.reproductor.encolar(frame.audio)
         return True
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        if isinstance(frame, InterruptionFrame):
+        # Solo cuenta la interrupción que corta audio EN CURSO. Pipecat emite un
+        # `InterruptionFrame` también al empezar el primer turno del paciente,
+        # cuando todavía no ha sonado nada; contar aquella daría un tiempo de
+        # corte negativo (se midió: −5.372 ms) en vez de un barge-in.
+        if isinstance(frame, InterruptionFrame) and self._hubo_audio:
+            self._hubo_audio = False
             # Equivalente al mensaje `parar` de la Opción B: el cliente tira lo
             # que tuviera encolado. Sin esto el corte sería una ficción del
-            # servidor. Con el ritmo real de este transporte la cola es corta,
-            # y eso es precisamente el resultado que hay que medir.
-            self.reproductor.vaciar()
+            # servidor: lo que se haya adelantado sigue sonando en el navegador.
+            self.ms_descartados_en_corte = self.reproductor.vaciar()
+            self.t_silencio = time.perf_counter()
 
 
 # ---------------------------------------------------------------------------

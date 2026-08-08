@@ -48,10 +48,21 @@ mantenerlos sincronizados y existe una ventana en la que un documento borrado
 sigue siendo recuperable. Con un solo datastore, `DELETE FROM documents` arrastra
 los vectores por `ON DELETE CASCADE` en la misma transacción. No hay ventana.
 
-**3. Pipecat, no un WebSocket propio.**
-Lo difícil de la voz en tiempo real no es STT ni TTS: es el barge-in (que el
-paciente interrumpa y el agente se calle), la detección de fin de turno, el
-resampleo y el jitter. Escribir eso a mano cuesta días que esta ventana no tiene.
+**3. Pipecat, no un WebSocket propio — pero no por el motivo que parecía.**
+La primera versión de este apartado decía que lo difícil era el barge-in y que
+Pipecat lo ahorraba. **Se construyeron las dos opciones y se midieron, y ese
+argumento resultó falso**: el barge-in funciona igual en ambas (84 ms contra
+96 ms), y el número lo domina el umbral de confirmación del VAD, no el framework.
+Escribirlo a mano costó 312 líneas frente a 171.
+
+Lo que Pipecat sí aporta, y decide: **solapa el STT con la espera de fin de
+turno** en vez de encadenarlos. Eso son 1.596 ms hasta el primer audio frente a
+1.975 ms — 379 ms, un 19 %. El truco se puede copiar en unas 15 líneas; el valor
+de Pipecat es traerlo puesto junto con el reloj de reproducción y el vaciado de
+buffers. Detalle completo en [docs/VOZ_COMPARATIVA.md](docs/VOZ_COMPARATIVA.md).
+
+La opción propia no se tira: es el plan B de un solo fichero, el arnés con el que
+se midió todo esto, y el banco de pruebas con micrófono.
 
 ### Alternativas descartadas
 
@@ -74,17 +85,37 @@ Todo lo local se midió de verdad; el LLM es una estimación hasta tener API key
 
 | Etapa | Medido | Nota |
 |---|---:|---|
-| STT — Whisper `small` + prompt clínico | **481 ms** | turno de 2-8 s |
+| **Fin de turno — Silero VAD** | **626 ms** | la etapa que este presupuesto no contaba |
+| STT — Whisper `small` + prompt clínico | **391 ms** | con Pipecat se solapa con la etapa anterior |
 | Embedding de la consulta — bge-m3 | **25 ms** | despreciable |
 | Retrieval híbrido — Postgres | **3 ms** | pgvector + FTS + RRF sobre 25 fragmentos |
 | Reranker — bge-reranker-v2-m3, top-8 | **585 ms** | ver abajo: el mayor bloque del pipeline |
-| LLM TTFT — Gemini 2.5 Flash | *~300-600 ms* | sin medir, falta API key |
-| TTS 1ª frase — Kokoro `ef_dora` | **461 ms** | se sintetiza por frase |
+| LLM TTFT — Gemini 2.5 Flash | *~400 ms* | **el único número sin medir**; falta API key |
+| TTS 1ª frase — Kokoro `ef_dora` | **196-303 ms** | mejor de lo que se creyó (461 ms) |
 | TTS 1ª frase — ElevenLabs Flash | **354 ms** | más rápido que el local, con red |
-| **Hasta el primer audio, con reranker** | **≈ 2.2-2.5 s** | no aceptable |
-| **Hasta el primer audio, sin reranker** | **≈ 1.6-1.9 s** | |
+| **Hasta el primer audio, con reranker** | **≈ 2.1 s** | no aceptable para conversar |
+| **Hasta el primer audio, sin reranker** | **≈ 1.5 s** | |
 
-Medido en caliente contra la API real, no en un banco de pruebas aparte.
+Medido en caliente contra la API y el pipeline reales, no en bancos de pruebas
+aparte. Dos correcciones que este presupuesto necesitó, y las dos son
+instructivas:
+
+**Faltaba una etapa entera.** El fin de turno —el tiempo que el sistema espera
+para estar seguro de que el paciente terminó de hablar— cuesta 626 ms y no
+aparecía en ninguna versión anterior de esta tabla. Es la segunda etapa más cara
+del camino, por delante del STT, y no la había contado nadie porque no es un
+modelo que se ejecute: es una espera deliberada.
+
+El umbral está en **640 ms**, y se eligió aceptando un corte falso sobre una pausa
+deliberada de 700 ms en vez de subir a 800 ms, que no fallaba ninguna. El motivo:
+con el barge-in funcionando, un corte falso se recupera en 97 ms, mientras que
+160 ms extra se pagan en los ~15 turnos de la llamada.
+
+**El TTS local era mejor de lo medido.** Kokoro tarda 196-303 ms a la primera
+frase, no 461 ms. Y de paso apareció que `kokoro` no estaba en `pyproject.toml`:
+la Fase 0 lo midió con `uv run --with kokoro` y nunca llegó a ser dependencia del
+proyecto, así que el modo de voz **por defecto** llevaba todo el tiempo sin
+arrancar. Corregido.
 
 ### El reranker costaba cinco veces lo presupuestado
 

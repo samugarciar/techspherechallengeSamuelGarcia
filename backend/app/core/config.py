@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -58,10 +58,14 @@ class Settings(BaseSettings):
 
     rerank_enabled: bool = True
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
-    # Medido en M4: rerankear 8 candidatos = 114 ms (cabe en el presupuesto de
-    # voz); 20 candidatos = 260 ms (no cabe). El plan asumía 20; la medición
-    # manda. La calidad no sufre: el cross-encoder separa nítidamente
-    # (0.993 el pasaje correcto vs 0.004 el siguiente).
+    # CUIDADO con este bloque: aquí hubo un error de medición que costó caro.
+    # El spike de la Fase 0 dijo 114 ms para 8 candidatos, pero medía pasajes de
+    # 250 caracteres. Los fragmentos reales tienen entre 500 y 1400, y el coste
+    # de un cross-encoder escala con la longitud de la secuencia. Medido contra la
+    # API real, en caliente: **585 ms**, el mayor bloque del pipeline de voz.
+    # Ver README §«El reranker costaba cinco veces lo presupuestado» y
+    # eval/medir_reranker.py, que está escrito para cerrar la decisión de
+    # encenderlo o no con el corpus real en vez de con documentos sintéticos.
     retrieve_top_k: int = 8
     context_top_k: int = 4
 
@@ -72,6 +76,24 @@ class Settings(BaseSettings):
 
     # --- Almacenamiento ------------------------------------------------------
     storage_dir: Path = Field(default=REPO_ROOT / "storage" / "documents")
+
+    @field_validator("storage_dir")
+    @classmethod
+    def _absoluta(cls, v: Path) -> Path:
+        """Ancla la carpeta a la raíz del repo si viene relativa.
+
+        `.env` trae `STORAGE_DIR=./storage/documents`, y una ruta relativa se
+        resuelve contra el directorio de trabajo del proceso. Como la API se
+        arranca desde `backend/` y los scripts desde la raíz, cada uno miraría
+        una carpeta distinta. La consecuencia leve es que el worker no encuentra
+        lo que escribió la API. La grave es que `olvidar_documento()` comprueba
+        que el archivo esté por debajo de `storage_dir` antes de borrarlo —una
+        defensa correcta contra travesías de ruta— y esa comparación falla si los
+        dos procesos resuelven distinto: la fila desaparece de la base, el agente
+        olvida de verdad, y el PDF con datos clínicos se queda en el disco del
+        hospital para siempre. Un olvido a medias, y silencioso.
+        """
+        return v if v.is_absolute() else (REPO_ROOT / v).resolve()
 
     # --- Admin ---------------------------------------------------------------
     admin_token: str = "cambiar-esto-en-local"

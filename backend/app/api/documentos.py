@@ -168,7 +168,21 @@ async def _version_anterior(conn, sha256: str) -> UUID | None:
         promocionara, chocaría con el índice único parcial de `documents`.
       - Hay una versión ya 'ready' -> se acepta como versión nueva y se anota a
         quién sustituye. Es el camino de "resubir el protocolo corregido".
+
+    El cerrojo por contenido es lo que hace que esto siga siendo cierto con dos
+    peticiones a la vez. Entre el SELECT y el INSERT del llamante hay `await`s
+    (escribir el archivo, entre otros), así que dos subidas simultáneas del mismo
+    archivo no se ven la una a la otra —ninguna ha hecho COMMIT— y ambas se dan
+    por primeras: dos filas, dos jobs y dos embebidos para el mismo contenido. La
+    promoción los ordena después (ver `ingest.procesar_documento`), pero la
+    consola se queda con un documento de sobra marcado 'superseded' antes de haber
+    existido, y el administrador no tiene forma de saber por qué.
+
+    De transacción, así que se suelta con el COMMIT o el ROLLBACK. Solo serializa
+    subidas del MISMO sha256: dos protocolos distintos no se esperan.
     """
+    await conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (sha256,))
+
     cur = await conn.execute(
         """
         SELECT id, status FROM documents
