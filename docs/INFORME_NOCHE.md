@@ -27,14 +27,43 @@ real**, no solo en tests unitarios:
 Reproducible en un comando: `uv run python scripts/demo_aprender_olvidar.py`.
 Es a la vez el guion de la demo y la prueba de regresión de la garantía.
 
-**108 tests en verde** y `ruff` limpio. La consola de React compila sin errores
-de TypeScript.
+**213 tests en verde**, ejecutados dos veces sobre bases distintas para descartar
+inestabilidad, y `ruff` limpio. La consola de React compila sin errores de
+TypeScript.
 
 | Fase | Estado |
 |---|---|
-| 1 — pipeline RAG sin voz | Cerrada: parsing, cola, worker, retrieval híbrido |
+| 1 — pipeline RAG sin voz | Cerrada: parsing con OCR de respaldo, cola, worker, retrieval híbrido |
 | 2 — consola de administración | Cerrada: API con SSE + panel de documentos |
-| 3 — loop de voz | Las dos opciones construidas; **falta elegir por medición** |
+| 3 — loop de voz | **Decidida por medición: Pipecat.** Falta montarla sobre WebRTC y probarla con micrófono |
+
+---
+
+## La decisión de voz, y un argumento mío que resultó falso
+
+Se construyeron las dos opciones y se midieron con el mismo STT, el mismo LLM
+simulado y el mismo presupuesto de fin de turno. Detalle en
+[docs/VOZ_COMPARATIVA.md](VOZ_COMPARATIVA.md).
+
+| | Pipecat | WebSocket propio |
+|---|---:|---:|
+| Hasta el primer audio | **1.596 ms** | 1.975 ms |
+| Barge-in (silencio audible) | 84 ms | 96 ms |
+| Líneas de código de producción | 171 | 312 |
+| Distribuciones / disco | 52 / 395 MB | 7 / 117 MB |
+
+**Gana Pipecat, pero no por el motivo que yo había escrito en el README.** Decía
+que el barge-in era el trabajo difícil que Pipecat te ahorra. Es falso: funciona
+igual en las dos, y el número lo domina el umbral de confirmación del VAD, no el
+framework. Lo que decide de verdad es que Pipecat **solapa el STT con la espera de
+fin de turno** en lugar de encadenarlos: 379 ms, un 19 %.
+
+La opción propia no se tira. Es el plan B de un solo fichero, el arnés con el que
+se midió todo esto, y el banco de pruebas con micrófono.
+
+**Al presupuesto de latencia le faltaba una etapa entera.** El fin de turno cuesta
+626 ms —más que el STT— y no aparecía en ninguna versión de la tabla, porque no es
+un modelo que se ejecute sino una espera deliberada. El umbral quedó en 640 ms.
 
 ---
 
@@ -69,12 +98,39 @@ medición.
 
 ---
 
+---
+
+## Tres bugs encontrados atacando el sistema
+
+Detalle completo en [docs/ROBUSTEZ.md](ROBUSTEZ.md).
+
+**1. El olvido dejaba el archivo en disco.** El más grave, porque era el requisito
+central incumplido a medias y en silencio. `STORAGE_DIR` era relativo y se
+resolvía contra el directorio del proceso; la comprobación anti-travesía de
+`olvidar_documento()` fallaba y el `except OSError: pass` se lo tragaba. La fila
+desaparecía, el agente olvidaba de verdad, y **el PDF con datos del paciente se
+quedaba en el disco del hospital**. Arreglado, y de paso desapareció una
+inestabilidad de los tests que tenía la misma causa: se pisaban a través de esa
+carpeta mal resuelta.
+
+**2. El modo de voz por defecto no arrancaba.** `kokoro` no estaba en
+`pyproject.toml`: la Fase 0 lo midió con `uv run --with kokoro` y nunca llegó a
+ser dependencia. `crear_motor("kokoro")` lanzaba `ModuleNotFoundError`.
+
+**3. El PDF escaneado habría llegado a `ready` con 0 fragmentos**, con la consola
+diciendo «Listo — el agente ya lo sabe» habiendo aprendido nada. Era el riesgo más
+probable de cara a tu corpus real. Resuelto mejor que rechazándolo: PyMuPDF de
+primario y **Docling con OCR de respaldo**, que se dispara solo cuando la
+extracción directa no saca texto.
+
+---
+
 ## Lo que queda sin hacer o sin verificar
 
-**La comparativa de voz.** Es el hueco grande. Están construidas las dos
-opciones —Pipecat 275 líneas, WebSocket propio 488, VAD 300— pero medirlas se
-cortó dos veces. Sin la comparación, tener ambas no sirve todavía. El entregable
-`docs/VOZ_COMPARATIVA.md` es lo primero que hay que cerrar.
+**La voz no se ha probado con un micrófono.** Está decidida y medida, pero
+inyectando audio. Falta montar el transporte WebRTC real (`POST /api/voz/offer`)
+y que un humano hable. `scripts/spikes/cliente_voz/index.html` está listo para
+eso, en dos clics.
 
 **El TTFT del LLM sigue sin medir** porque `GEMINI_API_KEY` quedó vacía toda la
 noche. Es el último número que falta del presupuesto de latencia, y además
@@ -109,13 +165,32 @@ correr más de dos procesos pesados a la vez.
 
 ## Qué decidir por la mañana
 
-1. **El reranker**, con tu corpus real: `uv run python eval/medir_reranker.py`.
-   Si no gana aciertos, apagarlo devuelve 585 ms al presupuesto de voz.
-2. **Pipecat o WebSocket propio**, cuando esté `docs/VOZ_COMPARATIVA.md`.
-3. **Cuál de las voces de ElevenLabs**: compara `scripts/spikes/out/elevenlabs_*.wav`
+1. **La clave de Gemini.** Es lo que desbloquea más cosas: cierra el último número
+   del presupuesto de latencia y permite ejecutar por primera vez
+   `app/agent/llm_client.py`. Aviso concreto: al revisarlo se vio que
+   `GeminiClient.stream()` hace `await ...generate_content_stream(...)` y luego
+   itera, pero en `google-genai` ese método ya devuelve un iterador asíncrono, así
+   que **ese `await` es sospechoso de romper**. Sin clave no se puede confirmar.
+
+2. **El reranker**, con tu corpus real: `uv run python eval/medir_reranker.py`. Si
+   no gana aciertos, apagarlo devuelve 585 ms al presupuesto de voz — la palanca
+   más grande que queda.
+
+3. **Probar la voz con micrófono.** El único paso que necesita una persona:
+   ```bash
+   cd backend && TTS_ENGINE_LOCAL=say uv run uvicorn app.main:app --port 8000
+   cd scripts/spikes/cliente_voz && python3 -m http.server 5500
+   ```
+   Y en `localhost:5500`: turno normal → interrumpirle hablando encima → pausa de
+   duda a media frase → decir solo «Sí.» → probar con el volumen alto, a ver si se
+   autointerrumpe (si pasa, la solución son auriculares, no tocar el VAD).
+
+4. **Cuál de las voces de ElevenLabs**: compara `scripts/spikes/out/elevenlabs_*.wav`
    con `kokoro_ef_dora_completa.wav`. Ojo, el free tier solo permite voces
    *premade*; las de biblioteca dan `402`.
-4. **La clave de Gemini**, para cerrar el TTFT y probar el tool calling de verdad.
+
+5. **Montar Pipecat sobre WebRTC**: cambiar `EntradaInyectada`/`SalidaMedida` por
+   el transporte real y añadir `POST /api/voz/offer`.
 
 ## Cómo arrancarlo todo
 
