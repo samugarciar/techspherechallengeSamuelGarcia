@@ -1,0 +1,29 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: postop_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postop
+      POSTGRES_PASSWORD: postop
+      POSTGRES_DB: postop
+      # Diccionario español para full-text search
+      POSTGRES_INITDB_ARGS: "--locale-provider=icu --icu-locale=es-ES --encoding=UTF8"
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/app/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postop -d postop"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # 16 GB de RAM compartidos con los modelos locales: mantener Postgres modesto.
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+volumes:
+  pgdata:
