@@ -23,7 +23,7 @@ el agente lo aprende, lo que se borra lo olvida** — de forma verificable.
 | TTS | **Dos modos**: local (Kokoro) y premium (ElevenLabs), conmutables desde la consola | Flexibilidad de coste sin recompilar: gratis e ilimitado para operar, voz premium cuando la experiencia lo justifique |
 | Vector DB | Postgres 16 + pgvector (HNSW) | Convierte «borrar = olvidar» en una propiedad ACID, no en disciplina del programador |
 | Embeddings | `BAAI/bge-m3` sobre MPS | 1024 dims, multilingüe fuerte; 24 ms por consulta |
-| Reranker | `bge-reranker-v2-m3`, top-8 | 114 ms y discrimina nítido (0.993 vs 0.004); apagable por env |
+| Reranker | `bge-reranker-v2-m3`, top-8 | Discrimina nítido (0.993 vs 0.004), pero cuesta 585 ms: decisión abierta, ver abajo |
 | Búsqueda | Híbrida: denso + FTS español + RRF | El léxico acierta «cefalexina 500 mg»; el denso acierta «¿me puedo bañar?» |
 | Parsing | Docling (PyMuPDF de respaldo) | Conserva la jerarquía de secciones, de la que depende todo el troceado |
 | Cola de ingesta | Postgres `FOR UPDATE SKIP LOCKED` | El estado del job vive en la misma transacción que el documento |
@@ -75,18 +75,53 @@ Todo lo local se midió de verdad; el LLM es una estimación hasta tener API key
 | Etapa | Medido | Nota |
 |---|---:|---|
 | STT — Whisper `small` + prompt clínico | **481 ms** | turno de 2-8 s |
-| Embedding de la consulta — bge-m3 | **24 ms** | despreciable |
-| Retrieval híbrido — Postgres | *pendiente* | se mide en la Fase 1 |
-| Reranker — bge-reranker-v2-m3, top-8 | **114 ms** | apagable |
+| Embedding de la consulta — bge-m3 | **25 ms** | despreciable |
+| Retrieval híbrido — Postgres | **3 ms** | pgvector + FTS + RRF sobre 25 fragmentos |
+| Reranker — bge-reranker-v2-m3, top-8 | **585 ms** | ver abajo: el mayor bloque del pipeline |
 | LLM TTFT — Gemini 2.5 Flash | *~300-600 ms* | sin medir, falta API key |
 | TTS 1ª frase — Kokoro `ef_dora` | **461 ms** | se sintetiza por frase |
-| **Hasta el primer audio** | **≈ 1.4-1.7 s** | |
+| TTS 1ª frase — ElevenLabs Flash | **354 ms** | más rápido que el local, con red |
+| **Hasta el primer audio, con reranker** | **≈ 2.2-2.5 s** | no aceptable |
+| **Hasta el primer audio, sin reranker** | **≈ 1.6-1.9 s** | |
 
-Palancas si hay que bajarlo, en orden de coste:
+Medido en caliente contra la API real, no en un banco de pruebas aparte.
 
-1. Apagar el reranker (`RERANK_ENABLED=false`) → −114 ms
-2. Cambiar a Groq (`LLM_PROVIDER=groq`) → −200-400 ms estimados
-3. Bajar a `CONTEXT_TOP_K=2` → menos tokens de entrada, LLM más rápido
+### El reranker costaba cinco veces lo presupuestado
+
+La primera versión de esta tabla decía 114 ms. **Era un error de medición mío**, y
+conviene dejarlo escrito porque explica cómo se toma bien esta clase de decisión.
+
+El spike de la Fase 0 midió el cross-encoder con pasajes de 250 caracteres. Los
+fragmentos reales tienen entre 500 y 1400, y el coste de un cross-encoder escala
+con la longitud de la secuencia, no con el número de pasajes. Medido de verdad:
+
+| Longitud del pasaje | `max_length` | 8 candidatos |
+|---|---:|---:|
+| 250 caracteres | 512 | 194 ms ← lo que se midió en la Fase 0 |
+| 1400 caracteres | 512 | **924 ms** |
+| 1400 caracteres | 256 | 609 ms |
+| 1400 caracteres | 192 | 452 ms |
+| 1400 caracteres | 128 | 303 ms |
+
+La lección: un spike de latencia solo vale si sus entradas se parecen a las
+reales. Medir con datos de juguete da números de juguete.
+
+**La decisión queda abierta a propósito.** Sobre el corpus provisional —3
+protocolos sintéticos, 25 fragmentos— el retrieval híbrido ya acierta el
+documento correcto casi siempre, así que el reranker no tiene margen para
+demostrar nada: eso no prueba que sobre, prueba que *este corpus no sirve para
+decidirlo*. `eval/medir_reranker.py` está escrito para volver a lanzarlo con los
+documentos reales y cerrar la decisión con datos que signifiquen algo.
+
+Mientras tanto el valor por defecto es el conservador, porque en dominio clínico
+recuperar el protocolo equivocado es peor que responder despacio.
+
+Palancas si hay que bajar la latencia, en orden de coste:
+
+1. Apagar el reranker (`RERANK_ENABLED=false`) → **−585 ms**, la palanca grande
+2. Rerankear menos candidatos (`RETRIEVE_TOP_K=5`) → ≈ −40 % del coste del reranker
+3. Cambiar a Groq (`LLM_PROVIDER=groq`) → −200-400 ms estimados
+4. Bajar a `CONTEXT_TOP_K=2` → menos tokens de entrada, LLM más rápido
 
 ### Cómo se eligió el modelo de STT
 
@@ -225,9 +260,19 @@ eval/         golden set y evaluación del RAG
 ## Estado
 
 - [x] **Fase 0** — infraestructura, schema verificado, presupuesto de latencia medido
-- [ ] **Fase 1** — pipeline RAG completo sin voz
-- [ ] **Fase 2** — consola de administración
-- [ ] **Fase 3** — loop de voz
-- [ ] **Fase 4** — agente de seguimiento y banderas rojas
+- [x] **Fase 1** — pipeline RAG completo sin voz: parsing, cola, worker, retrieval híbrido
+- [x] **Fase 2** — consola de administración: API con SSE + panel de documentos en React
+- [ ] **Fase 3** — loop de voz *(las dos opciones construidas; falta elegir por medición)*
+- [ ] **Fase 4** — agente de seguimiento y banderas rojas *(bloqueado: falta API key)*
 - [ ] **Fase 5** — web app de llamada
 - [ ] **Fase 6** — evals, tuning y guion de demo
+
+La garantía central se demuestra sin micrófono en un solo comando:
+
+```bash
+uv run python scripts/demo_aprender_olvidar.py
+```
+
+Sube un protocolo, espera a que el agente lo aprenda, le pregunta algo que solo
+ese documento responde, lo borra y vuelve a preguntar. Medido: **2,6 s** de la
+subida a `ready`, y la segunda consulta devuelve cero fragmentos.
