@@ -12,8 +12,12 @@ node_modules/
 dist/
 .vite/
 
-# Entorno y secretos
+# Entorno y secretos.
+# .env.example también se excluye: aunque hoy solo tiene plantillas, ya llegó
+# una vez con una API key real dentro, y un fichero que invita a rellenarse
+# es el sitio equivocado para confiar en la disciplina de nadie.
 .env
+.env.example
 .env.local
 *.key
 
@@ -40,3 +44,9 @@ models/
 
 # Modelos descargados por los spikes (60 MB, se re-descargan con el script)
 scripts/spikes/piper_voices/
+
+# Bitácora de desarrollo: documento de trabajo, no del producto
+BITACORA.md
+
+# Enlace local a los modelos de Piper (60 MB, se re-descargan)
+scripts/spikes/piper_voices
