@@ -6,9 +6,17 @@ juntos y puede juzgar si el pasaje responde de verdad a la pregunta. En dominio
 clínico, donde la diferencia entre "puede ducharse a las 48 h" y "mantenga el
 apósito seco" decide la respuesta, ese juicio importa.
 
-Es también el componente más caro del camino de voz, así que está detrás de un
-interruptor (RERANK_ENABLED). Si el presupuesto de latencia no le da cabida se
-apaga sin tocar el resto del sistema.
+Es también el componente más caro del camino de voz —585 ms medidos contra la API
+real, no los 114 ms que presupuestó la Fase 0 midiendo con pasajes de juguete—, así
+que está detrás de un interruptor (RERANK_ENABLED).
+
+Ese interruptor NO está listo para usarse todavía, aunque el nombre invite. Las dos
+ramas de `reordenar()` emiten scores en escalas distintas y `hay_evidencia()` las
+compara con el mismo umbral, de modo que apagarlo hoy no cuesta precisión: rompe el
+grounding entero y en silencio. Ver `docs/REVISION_F2_F3.md` §1.12 y el
+`xfail(strict=True)` de `tests/test_api_rag.py`, que se pondrá rojo el día que se
+arregle. Encender o apagar el reranker es además una decisión abierta que espera al
+corpus real (`eval/medir_reranker.py`).
 """
 
 import asyncio
@@ -46,8 +54,11 @@ async def reordenar(
 ) -> list[Fragmento]:
     """Reordena los candidatos de la búsqueda híbrida y se queda con los mejores.
 
-    Con el reranker apagado devuelve el orden de RRF recortado, de modo que el
-    resto del pipeline no cambia de forma.
+    Con el reranker apagado devuelve el orden de RRF recortado. La *forma* no
+    cambia —misma lista de `Fragmento`—, pero la ESCALA de `score` sí: RRF con
+    k=60 tiene un máximo teórico de 0,0328 y el cross-encoder llega a 1. Como
+    `hay_evidencia()` compara ambas contra el mismo umbral, esa rama es hoy el
+    fallo 1.12 y no un modo de funcionamiento válido.
     """
     s = get_settings()
     top_k = top_k or s.context_top_k

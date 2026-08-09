@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Prueba de voz — seguimiento postoperatorio</title>
+<!--
+  Página mínima para probar el bucle de voz de la Opción B con micrófono real.
+  Es un banco de pruebas, no la web app: no hay React, ni build, ni dependencias.
+  Se abre con file:// o con cualquier servidor estático.
+
+  Por qué PCM crudo y no MediaRecorder: MediaRecorder entrega WebM/Opus, que
+  obliga a decodificar en el servidor (ffmpeg por trozo) y añade el retardo de
+  contenedor del códec. Un AudioWorklet entrega Float32 sin contenedor, y
+  convertirlo a int16 a 16 kHz aquí cuesta microsegundos.
+
+  Cómo arrancar — ver scripts/spikes/cliente_voz/README.md
+-->
+<style>
+  :root { color-scheme: light dark; --borde:#8884; }
+  body { font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; max-width: 46rem;
+         margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.2rem; }
+  button { font: inherit; padding: .6rem 1.1rem; border-radius: .5rem;
+           border: 1px solid var(--borde); cursor: pointer; }
+  button[disabled] { opacity: .45; cursor: default; }
+  #estado { margin: 1rem 0; padding: .6rem .9rem; border: 1px solid var(--borde);
+            border-radius: .5rem; }
+  #medidor { height: 8px; background: #8882; border-radius: 4px; overflow: hidden; }
+  #medidor > i { display: block; height: 100%; width: 0; background: currentColor;
+                 transition: width .05s linear; }
+  #registro { margin-top: 1rem; border: 1px solid var(--borde); border-radius: .5rem;
+              padding: .5rem .9rem; max-height: 22rem; overflow-y: auto;
+              font-variant-numeric: tabular-nums; }
+  #registro p { margin: .2rem 0; }
+  .yo { color: #2563eb; } .agente { color: #059669; } .sis { opacity: .6; }
+  .aviso { color: #b45309; }
+</style>
+</head>
+<body>
+<h1>Prueba de voz — seguimiento postoperatorio</h1>
+
+<p>Dos clics: <b>Conectar</b> y luego <b>Hablar</b>. Habla, calla, y el agente
+responde. Interrúmpele a media frase: debe callarse.</p>
+
+<p>
+  <label>Servidor
+    <input id="url" size="34" value="ws://localhost:8000/ws/voz">
+  </label>
+</p>
+<p>
+  <button id="conectar">Conectar</button>
+  <button id="hablar" disabled>Hablar</button>
+  <button id="parar" disabled>Parar</button>
+</p>
+
+<div id="estado">Sin conectar.</div>
+<div id="medidor"><i></i></div>
+<div id="registro"></div>
+
+<script>
+const SR_ENTRADA = 16000;   // lo que espera Whisper y Silero
+let ws, ctxEntrada, ctxSalida, nodo, flujo;
+let siguiente = 0;          // instante de reproducción del siguiente trozo
+let fuentes = [];           // trozos programados, para poder cortarlos en un barge-in
+
+const $ = (s) => document.querySelector(s);
+const log = (txt, clase = "sis") => {
+  const p = document.createElement("p");
+  p.className = clase;
+  p.textContent = txt;
+  $("#registro").prepend(p);
+};
+const estado = (t) => { $("#estado").textContent = t; };
+
+// --- Reproducción -----------------------------------------------------------
+// Los trozos llegan más rápido que el tiempo real, así que se programan en la
+// línea de tiempo del AudioContext. `pararAudio()` cancela lo programado: eso
+// es el barge-in visto desde el cliente, y sin ello el agente seguiría sonando
+// varios segundos después de que el servidor haya cortado.
+function reproducir(int16, sampleRate) {
+  const buf = ctxSalida.createBuffer(1, int16.length, sampleRate);
+  const canal = buf.getChannelData(0);
+  for (let i = 0; i < int16.length; i++) canal[i] = int16[i] / 32768;
+  const fuente = ctxSalida.createBufferSource();
+  fuente.buffer = buf;
+  fuente.connect(ctxSalida.destination);
+  siguiente = Math.max(siguiente, ctxSalida.currentTime);
+  fuente.start(siguiente);
+  siguiente += buf.duration;
+  fuentes.push(fuente);
+  fuente.onended = () => { fuentes = fuentes.filter((f) => f !== fuente); };
+}
+
+function pararAudio() {
+  for (const f of fuentes) { try { f.stop(); } catch (_) {} }
+  fuentes = [];
+  siguiente = 0;
+}
+
+// --- Conexión ---------------------------------------------------------------
+$("#conectar").onclick = () => {
+  ws = new WebSocket($("#url").value);
+  ws.binaryType = "arraybuffer";
+  let srSalida = 24000;
+
+  let abierto = false;
+
+  ws.onopen = () => {
+    abierto = true;
+    estado("Conectado. Pulsa «Hablar».");
+    $("#hablar").disabled = false;
+  };
+
+  // Un WebSocket no expone el código HTTP del rechazo al JavaScript de la
+  // página: `onerror` no trae motivo y `onclose` llega con code 1006 tanto si
+  // no hay servidor como si lo hay y la ruta no existe. Los dos casos se ven
+  // idénticos en pantalla y tienen arreglos distintos, así que se distinguen
+  // preguntando al backend por HTTP, que sí responde con detalle.
+  ws.onclose = () => {
+    $("#hablar").disabled = true;
+    if (abierto) { estado("Conexión cerrada."); return; }
+    estado("No se pudo conectar.");
+    diagnosticar();
+  };
+  ws.onerror = () => { if (!abierto) $("#hablar").disabled = true; };
+
+  async function diagnosticar() {
+    const base = $("#url").value.replace(/^ws/, "http").replace(/\/ws\/voz$/, "");
+    try {
+      const r = await fetch(base + "/api/health");
+      if (r.ok) {
+        log("El backend responde, pero /ws/voz no existe: está arrancado SIN voz. "
+            + "Párralo y vuelve a levantarlo con VOZ=1 — monta también todo lo de la "
+            + "consola, así que un solo servidor sirve para las dos cosas:\n"
+            + "    VOZ=1 TTS_ENGINE_LOCAL=say uv run uvicorn app.main:app --port 8000",
+            "aviso");
+        return;
+      }
+    } catch (_) {
+      log("No hay ningún backend escuchando en " + base + ". Levántalo con:\n"
+          + "    cd backend && VOZ=1 TTS_ENGINE_LOCAL=say uv run uvicorn app.main:app --port 8000",
+          "aviso");
+      return;
+    }
+    log("El backend responde pero rechaza /ws/voz. Revisa que arrancara con VOZ=1.",
+        "aviso");
+  }
+
+  ws.onmessage = (ev) => {
+    if (typeof ev.data !== "string") {
+      reproducir(new Int16Array(ev.data), srSalida);
+      return;
+    }
+    const m = JSON.parse(ev.data);
+    switch (m.tipo) {
+      case "listo":          srSalida = m.sample_rate_salida; break;
+      case "paciente_habla": estado("Te está escuchando…"); break;
+      case "fin_de_turno":   estado("Pensando…"); break;
+      case "transcripcion":  log("Tú: " + m.texto, "yo"); break;
+      case "agente_habla":   estado("Hablando."); break;
+      case "parar":          pararAudio(); log("(interrumpido)", "sis"); break;
+      case "fin_audio":      log("Agente: " + m.texto, "agente"); estado("Tu turno."); break;
+    }
+  };
+};
+
+// --- Captura ---------------------------------------------------------------
+$("#hablar").onclick = async () => {
+  flujo = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      // El cancelador de eco del navegador es imprescindible: sin él, la voz
+      // del agente que sale por el altavoz vuelve por el micrófono, el VAD la
+      // toma por voz del paciente y el agente se interrumpe a sí mismo en bucle.
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
+
+  ctxSalida = new AudioContext();
+  ctxEntrada = new AudioContext({ sampleRate: SR_ENTRADA });
+  // Si el navegador no concede 16 kHz (Safari suele imponer 48 kHz), se remuestrea
+  // por diezmado simple más abajo. No es un resampleo bonito, pero para voz de
+  // banda estrecha y un banco de pruebas es suficiente.
+  const factor = Math.round(ctxEntrada.sampleRate / SR_ENTRADA);
+
+  const codigo = `
+    class Captura extends AudioWorkletProcessor {
+      process(entradas) {
+        const c = entradas[0][0];
+        if (c) this.port.postMessage(new Float32Array(c));
+        return true;
+      }
+    }
+    registerProcessor('captura', Captura);
+  `;
+  await ctxEntrada.audioWorklet.addModule(
+    URL.createObjectURL(new Blob([codigo], { type: "application/javascript" }))
+  );
+
+  nodo = new AudioWorkletNode(ctxEntrada, "captura");
+  nodo.port.onmessage = (ev) => {
+    const f32 = ev.data;
+    const n = Math.floor(f32.length / factor);
+    const i16 = new Int16Array(n);
+    let pico = 0;
+    for (let i = 0; i < n; i++) {
+      const v = Math.max(-1, Math.min(1, f32[i * factor]));
+      i16[i] = v * 32767;
+      pico = Math.max(pico, Math.abs(v));
+    }
+    $("#medidor > i").style.width = Math.min(100, pico * 160) + "%";
+    if (ws && ws.readyState === 1) ws.send(i16.buffer);
+  };
+
+  ctxEntrada.createMediaStreamSource(flujo).connect(nodo);
+  $("#hablar").disabled = true;
+  $("#parar").disabled = false;
+  estado("Micrófono abierto. Habla y luego calla medio segundo.");
+  log("Micro a " + ctxEntrada.sampleRate + " Hz, diezmado ×" + factor
+      + " → " + SR_ENTRADA + " Hz.");
+};
+
+$("#parar").onclick = () => {
+  if (flujo) flujo.getTracks().forEach((t) => t.stop());
+  if (nodo) nodo.disconnect();
+  pararAudio();
+  $("#parar").disabled = true;
+  $("#hablar").disabled = false;
+  estado("Micrófono cerrado.");
+};
+</script>
+</body>
+</html>

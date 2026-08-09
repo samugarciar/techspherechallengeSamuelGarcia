@@ -16,12 +16,15 @@ de un modelo en mitad de una conversación.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Literal
 
 from app.core.config import get_settings
 from app.db.pool import connection
 from app.voice.tts import Audio, TTSEngine, crear_motor
+
+log = logging.getLogger("voz.modo")
 
 Modo = Literal["local", "premium"]
 
@@ -76,6 +79,16 @@ class VoiceRouter:
     cae a local automáticamente en vez de dejar al paciente en silencio. En una
     demo en vivo esa degradación es la diferencia entre un fallo y un detalle
     que nadie nota.
+
+    **NADIE CONSTRUYE ESTA CLASE TODAVÍA**, y conviene saberlo antes de creerse el
+    párrafo de arriba. Los dos caminos que sintetizan de verdad —`pipeline_ws.py`
+    y `servicios_pipecat.py`— llaman a `crear_motor(settings.tts_engine_local)`
+    directamente, así que hoy no hay degradación automática, el modo premium no es
+    alcanzable desde una llamada y `_anotar()` nunca corre (comprobado: cero filas
+    en `tts_usage` tras una llamada completa con cinco síntesis).
+
+    Enchufarlo es una línea en cada uno de esos dos sitios, pero cambia
+    comportamiento —empezaría a salir voz de pago— así que es decisión de Samuel.
     """
 
     def __init__(self) -> None:
@@ -100,7 +113,11 @@ class VoiceRouter:
         except Exception:
             if modo == "local":
                 raise
-            # Degradación a local: mejor una voz peor que ninguna voz.
+            # Degradación a local: mejor una voz peor que ninguna voz. Pero que
+            # se oiga en el log: si la demo entera suena en Kokoro porque la
+            # clave de ElevenLabs caducó, el detalle que nadie nota es
+            # exactamente el que hay que arreglar antes de salir al escenario.
+            log.warning("el motor premium falló; se degrada a local", exc_info=True)
             modo = "local"
             motor = await self._motor(modo)
             audio = await motor.sintetizar(texto)
@@ -124,8 +141,15 @@ class VoiceRouter:
                     (call_id, modo, engine, chars, int(ms), audio_s),
                 )
         except Exception:
-            # La contabilidad nunca debe tumbar una llamada en curso.
-            pass
+            # La contabilidad nunca debe tumbar una llamada en curso: es la
+            # decisión correcta y se mantiene. Lo que estaba mal era el `pass` a
+            # secas, hermano del que se tragaba el borrado del fichero en
+            # `olvidar_documento()` (ver docs/ROBUSTEZ.md §1). `tts_usage` es lo
+            # que el administrador mira para decidir si sigue en premium; si deja
+            # de escribirse, el panel dice «0 caracteres gastados» y la factura
+            # dice otra cosa. Un fallo silencioso en la contabilidad se descubre
+            # cuando llega el recibo.
+            log.warning("no se pudo anotar el consumo de TTS", exc_info=True)
 
     async def cerrar(self) -> None:
         for motor in self._motores.values():
@@ -134,10 +158,17 @@ class VoiceRouter:
 
 
 async def resumen_consumo() -> list[dict]:
-    """Consumo agregado por modo, para el panel de la consola.
+    """Consumo agregado por modo: caracteres gastados y latencia media obtenida.
 
-    Da al admin lo que necesita para decidir: cuántos caracteres lleva gastados
-    en premium y qué latencia media está obteniendo a cambio.
+    Es la respuesta a la única pregunta que hace útil el toggle de voz —¿qué me
+    está costando premium y qué gano?— y hoy **no la consume nadie**: el panel que
+    la enseñe está pendiente, porque el alcance de la Fase 2 se cerró en la gestión
+    de documentos.
+
+    Y hoy además devolvería una lista vacía siempre: quien llena `tts_usage` es
+    `VoiceRouter._anotar()`, y nadie construye `VoiceRouter` (ver arriba). Se
+    mantiene escrita porque es la mitad que ya está hecha del panel de consumo, no
+    porque haya datos que agregar.
     """
     async with connection() as conn:
         cur = await conn.execute(

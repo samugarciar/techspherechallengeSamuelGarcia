@@ -6,11 +6,23 @@ El free tier de ElevenLabs son ~10.000 caracteres al mes — una tarde de iterar
 sobre el guion se lo come, así que atarse a él durante el desarrollo sería un
 error de logística, no de arquitectura.
 
-El cambio es `TTS_ENGINE` en .env. Nada más del sistema se entera.
+Qué motor implementa cada modo se declara en `.env` (`TTS_ENGINE_LOCAL` /
+`TTS_ENGINE_PREMIUM`). Cuál de los dos modos está *activo* se guarda en la tabla
+`app_settings` y lo resuelve `app/voice/voice_mode.py`; a este módulo nadie le
+pregunta qué modo hay.
 
-Los motores locales siguen siendo la red de seguridad: si la red del venue falla
-durante la demo, se vuelve a Kokoro con una variable de entorno. Y sostienen el
-argumento de que el sistema puede correr 100% on-prem si un hospital lo exige.
+OJO, porque el reparto anterior describe un diseño que HOY no está enchufado: el
+único que lee el modo activo es `voice_mode.VoiceRouter`, y **a `VoiceRouter` no
+lo construye nadie**. Los dos caminos que sintetizan de verdad —`pipeline_ws.py` y
+`servicios_pipecat.py`— llaman a `crear_motor(settings.tts_engine_local)` sin
+preguntar por el modo, así que hoy el interruptor de la consola cambia una fila de
+`app_settings` y nada más: el modo premium no es alcanzable desde una llamada, la
+degradación automática a local no llega a ocurrir y `tts_usage` no se escribe.
+Cambiar de motor hoy es cambiar `TTS_ENGINE_LOCAL` y reiniciar. Ver
+`docs/VERIFICACION.md`.
+
+Los motores locales siguen siendo la red de seguridad —el sistema puede correr
+100% on-prem si un hospital lo exige— y son, hoy, los únicos que se usan.
 
 TODAS las salidas se normalizan a PCM float32 mono a 24 kHz, para que el
 pipeline de voz no tenga que saber qué motor está detrás.
@@ -22,8 +34,8 @@ import asyncio
 import re
 import subprocess
 import tempfile
+import threading
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,7 +96,7 @@ def dividir_en_frases(texto: str, minimo: int = 12) -> list[str]:
     """Trocea la respuesta del LLM en frases sintetizables.
 
     Es la optimización de latencia más importante del pipeline: sintetizar la
-    primera frase (461 ms con Kokoro) y empezar a reproducirla mientras el LLM
+    primera frase (196-303 ms con Kokoro) y empezar a reproducirla mientras el LLM
     todavía está escribiendo el resto, en vez de esperar al párrafo completo
     (987 ms). Duplica la sensación de rapidez sin tocar ningún modelo.
     """
@@ -122,16 +134,6 @@ class TTSEngine(ABC):
     @abstractmethod
     async def sintetizar(self, texto: str) -> Audio: ...
 
-    async def stream_por_frases(self, texto: str) -> AsyncIterator[Audio]:
-        """Emite audio frase a frase, en orden.
-
-        Implementación por defecto: secuencial. Sintetizar en paralelo y
-        reordenar daría peor resultado — el primer trozo es el único que el
-        paciente está esperando, y adelantar el tercero no sirve de nada.
-        """
-        for frase in dividir_en_frases(texto):
-            yield await self.sintetizar(frase)
-
     async def cerrar(self) -> None:
         return None
 
@@ -140,19 +142,34 @@ class TTSEngine(ABC):
 # Locales
 # ---------------------------------------------------------------------------
 class KokoroTTS(TTSEngine):
-    """Kokoro-82M, Apache-2.0. 461 ms a la primera frase en M4."""
+    """Kokoro-82M, Apache-2.0. 196-303 ms a la primera frase en M4.
+
+    El spike de la Fase 0 publicó 461 ms y se quedó en el README un tiempo; medido
+    otra vez contra el pipeline real es bastante más rápido, y eso devuelve al
+    local la ventaja de latencia que el smoke test de ElevenLabs (354 ms) parecía
+    haberle quitado.
+    """
 
     nombre = "kokoro"
 
     def __init__(self, voz: str) -> None:
         self.voz = voz
         self._pipe = None
+        # `sintetizar` va a un hilo con `asyncio.to_thread`, así que dos llamadas
+        # de voz simultáneas ejecutan `_cargar()` en paralelo de verdad. Sin
+        # cerrojo las dos ven `_pipe is None` y construyen un KPipeline cada una:
+        # dos copias de Kokoro-82M en una máquina de 16 GB que ya sostiene
+        # Whisper, bge-m3 y el reranker. La segunda además se descarta al asignar.
+        self._cerrojo = threading.Lock()
 
     def _cargar(self):
-        if self._pipe is None:
-            from kokoro import KPipeline
+        if self._pipe is not None:
+            return self._pipe
+        with self._cerrojo:
+            if self._pipe is None:
+                from kokoro import KPipeline
 
-            self._pipe = KPipeline(lang_code="e", repo_id="hexgrad/Kokoro-82M")
+                self._pipe = KPipeline(lang_code="e", repo_id="hexgrad/Kokoro-82M")
         return self._pipe
 
     def _sync(self, texto: str) -> Audio:
@@ -327,11 +344,17 @@ def _voz_piper() -> Path:
 
 
 def crear_motor(nombre: str) -> TTSEngine:
-    """Fábrica por nombre de motor.
+    """Fábrica por nombre de motor. Solo construye lo que le pidan.
 
-    Quien decide qué motor toca es `voice_mode.VoiceRouter`, según el modo
-    (local/premium) que el admin tenga activo en la consola. Esta función solo
-    construye lo que le pidan.
+    Quién decide el nombre: hoy, `pipeline_ws.crear_router()` y
+    `servicios_pipecat`, que pasan `settings.tts_engine_local` fijo. El diseño
+    previsto era que decidiera `voice_mode.VoiceRouter` según el modo activo en
+    `app_settings`, pero nadie construye ese router todavía — ver la cabecera del
+    módulo.
+
+    Los nombres se despachan aquí y solo aquí, así que `PiperTTS`, `SayTTS` y
+    `CartesiaTTS` no aparecen usados en ningún `grep`: son las opciones del
+    interruptor, no código muerto.
     """
     s = get_settings()
     match nombre:

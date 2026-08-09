@@ -24,6 +24,34 @@ from app.db.pool import connection
 # puestos: sin ella, un rank 1 dominaría a un rank 2 de la otra lista.
 RRF_K = 60
 
+# La consulta léxica, en OR y no en AND. Es un arreglo, no una preferencia:
+# `websearch_to_tsquery('spanish', '¿qué hago si me sube la fiebre?')` produce
+# `'hag' & 'si' & 'sub' & 'fiebr'` —AND de todos los términos— y sobre el corpus
+# de protocolos eso da CERO filas, aunque el fragmento diga «fiebre superior a
+# 38.5 grados». Con AND la mitad léxica de la búsqueda híbrida solo se activa
+# cuando el usuario escribe justo las palabras del documento y ninguna de más, es
+# decir: nunca, porque un paciente por teléfono habla en preguntas. Medido sobre
+# `protocolo_apendicectomia.pdf`, ocho candidatos y `lexical_rank = None` en los
+# ocho. La mitad que el README vende como la que acierta «cefalexina 500 mg»
+# estaba muerta para todo lo que no fuera una consulta de palabras clave.
+#
+# El OR se construye tokenizando la consulta con `to_tsvector` —que ya quita
+# stopwords y lematiza con el diccionario español— y uniendo los lexemas con `|`.
+# No hace falta escapar nada porque los lexemas salen ya normalizados por el
+# propio Postgres. Con la consulta vacía o solo signos de puntuación, el array
+# queda vacío, `to_tsquery` recibe NULL por el NULLIF y la rama léxica devuelve
+# cero filas en vez de reventar: la densa sigue respondiendo sola.
+#
+# No se pierde precisión al ampliar a OR porque el orden lo pone `ts_rank_cd`,
+# que puntúa más alto a quien contiene MÁS términos de la consulta y más juntos.
+# Lo que sí se pierde es la búsqueda por frase exacta entre comillas de
+# `websearch_to_tsquery`; nadie le dicta comillas a un agente de voz.
+_TSQUERY_OR = """
+    to_tsquery('spanish',
+        NULLIF(array_to_string(
+            tsvector_to_array(to_tsvector('spanish', %(qtext)s)), ' | '), ''))
+"""
+
 
 @dataclass(slots=True)
 class Fragmento:
@@ -51,7 +79,7 @@ class Fragmento:
 # Dos rankings independientes sobre la MISMA vista, fusionados por RRF.
 # FULL OUTER JOIN: un chunk que solo aparece en una de las dos listas sigue
 # siendo candidato (con la contribución de la otra a 0).
-_SQL_HIBRIDO = """
+_SQL_HIBRIDO = f"""
 WITH denso AS (
     SELECT id, document_id, filename, content, heading, page,
            ROW_NUMBER() OVER (ORDER BY embedding <=> %(qvec)s) AS rank
@@ -65,7 +93,7 @@ lexico AS (
                ORDER BY ts_rank_cd(content_tsv, query) DESC
            ) AS rank
     FROM retrievable_chunks,
-         websearch_to_tsquery('spanish', %(qtext)s) AS query
+         {_TSQUERY_OR} AS query
     WHERE content_tsv @@ query
     ORDER BY ts_rank_cd(content_tsv, query) DESC
     LIMIT %(pool)s
@@ -128,9 +156,57 @@ async def buscar(
     ]
 
 
+async def revalidar(fragmentos: list[Fragmento]) -> list[Fragmento]:
+    """Descarta los fragmentos que han dejado de ser recuperables mientras tanto.
+
+    Es la última etapa de toda consulta y protege del peor fallo que este sistema
+    puede cometer: citarle a un paciente un protocolo que el hospital acaba de
+    retirar.
+
+    El agujero no está en el schema, está en el tiempo. Entre que `buscar()` lee y
+    que la respuesta sale pasan ~585 ms del cross-encoder, y en esa ventana el
+    administrador puede borrar el documento. Ninguna de las dos garantías del
+    schema lo tapa: el CASCADE borra las filas de verdad, pero la sentencia que ya
+    las leyó trabajaba sobre su propia instantánea —READ COMMITTED: cada sentencia
+    ve el estado que había cuando ELLA empezó— y los `Fragmento` ya están en
+    memoria de Python, donde Postgres no llega. El borrado es correcto y la
+    respuesta lleva igualmente el texto retirado.
+
+    Se descartó la alternativa de recuperar dentro de una transacción REPEATABLE
+    READ que se mantuviera abierta hasta responder: agrava el problema en vez de
+    arreglarlo, porque congela la instantánea todavía más atrás, y además retiene
+    una de las 8 conexiones del pool durante todo el rerank.
+
+    Lo que esto garantiza es acotado y hay que decirlo con precisión: que ningún
+    fragmento devuelto estaba borrado en el momento de esta comprobación. La
+    ventana no desaparece —es imposible—, pasa de ~585 ms a la latencia de una
+    consulta por clave primaria, que es el mínimo teórico.
+    """
+    if not fragmentos:
+        return []
+
+    async with connection() as conn:
+        cur = await conn.execute(
+            # Contra la vista, no contra `chunks`: la invariante del diseño es que
+            # el retrieval no mira la tabla ni siquiera para comprobar. Un chunk
+            # cuyo documento pasó a 'superseded' sigue en `chunks` y ya no debe
+            # devolverse.
+            "SELECT id FROM retrievable_chunks WHERE id = ANY(%s::uuid[])",
+            ([f.chunk_id for f in fragmentos],),
+        )
+        vivos = {str(f["id"]) for f in await cur.fetchall()}
+
+    return [f for f in fragmentos if f.chunk_id in vivos]
+
+
 async def solo_denso(query_vector: np.ndarray, top_k: int = 10) -> list[Fragmento]:
-    """Búsqueda puramente vectorial. Existe para comparar contra la híbrida en
-    los evals de la Fase 6 — sirve para justificar el híbrido con números."""
+    """Búsqueda puramente vectorial. **No la llama nadie todavía.**
+
+    Existe para comparar contra la híbrida en los evals de la Fase 6: el argumento
+    de que el híbrido hace falta —«el léxico acierta *cefalexina 500 mg*, el denso
+    acierta *¿me puedo bañar?*»— es hoy una afirmación razonable y sin medir, y
+    esta función es la mitad que falta para convertirla en un número.
+    """
     async with connection() as conn:
         cur = await conn.execute(
             """
