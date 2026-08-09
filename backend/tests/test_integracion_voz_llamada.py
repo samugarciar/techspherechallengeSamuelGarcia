@@ -663,6 +663,85 @@ async def test_si_la_base_falla_la_llamada_continua(
     await sesion.cerrar()
 
 
+# ---------------------------------------------------------------------------
+# El LLM falla a mitad de llamada
+# ---------------------------------------------------------------------------
+async def test_si_el_llm_revienta_por_voz_el_paciente_oye_la_frase_de_seguridad(
+    cliente, cabeceras, llm, monkeypatch
+) -> None:
+    """Timeout, cuota agotada o 503 del proveedor, con el paciente al teléfono.
+
+    `test_agente_llamadas.py` ya cubre este caso por el camino de TEXTO
+    (`POST /calls/{id}/mensaje`), que es donde el agente devuelve su respuesta de
+    una pieza. Por voz el recorrido es otro —`SesionDeVoz.stream` envuelve
+    `AgenteLlamada.stream`, y en medio están el troceado por frases, el anuncio de
+    citas y banderas, la síntesis y la cola de persistencia— así que que uno
+    funcione no dice nada del otro. Y es el que importa: por teléfono un silencio
+    se interpreta como que se ha cortado la llamada.
+
+    Lo que tiene que pasar: sale la frase de seguridad, SUENA, y la llamada queda
+    escalada en la base aunque el fallo sea técnico.
+    """
+    call_id = await _abrir_llamada(cliente, cabeceras, PACIENTES["ana"])
+
+    async def _reventar(*_args, **_kwargs):
+        raise TimeoutError("el proveedor no respondió dentro del techo de 12 s")
+
+    monkeypatch.setattr(llm, "responder", _reventar)
+
+    stt = STTFalso()
+    sesion, grabadora = await _montar_voz(call_id, stt)
+    await _turno(sesion, stt, "me duele mucho la herida")
+
+    dicho = [e["texto"] for e in grabadora.eventos if e["tipo"] == "agente_habla"]
+    assert dicho, "el agente no dijo nada: el paciente se quedó escuchando silencio"
+    assert "equipo médico" in dicho[-1], dicho
+    assert grabadora.bytes_audio > 0, "la frase de seguridad no llegó a sonar"
+
+    # Un turno que se rinde no es un turno roto: se emite entero, con sus
+    # métricas, y no se marca como fallado.
+    assert sesion.turnos[-1].error is None
+    assert grabadora.primero("metricas") is not None
+
+    await sesion.cerrar()
+
+    async with connection() as conn:
+        cur = await conn.execute(
+            "SELECT escalated, escalation_urgency FROM calls WHERE id = %s", (call_id,)
+        )
+        fila = await cur.fetchone()
+    assert fila["escalated"] is True, "un fallo técnico dejó la llamada sin aviso"
+    assert fila["escalation_urgency"] == "prioritaria"
+
+    # Y queda en la transcripción que el equipo clínico va a leer.
+    dichos = [f["content"] for f in await _turnos_guardados(call_id)]
+    assert any("equipo médico" in t for t in dichos), dichos
+
+
+async def test_una_respuesta_vacia_por_voz_tampoco_deja_al_paciente_esperando(
+    cliente, cabeceras, llm
+) -> None:
+    """`finish_reason=MAX_TOKENS` y los filtros de seguridad: llega vacío y sin error.
+
+    Es el fallo del LLM que NO lanza excepción, así que el `except` del bucle de
+    herramientas no lo ve. Por voz tiene además una consecuencia propia: un turno
+    sin texto no produce ninguna frase que sintetizar, y sin la rendición el
+    pipeline emitiría cero bytes de audio sin que nada pareciera haber fallado.
+    """
+    call_id = await _abrir_llamada(cliente, cabeceras, PACIENTES["ana"])
+    llm.respuestas = [RespuestaLLM("", [], None, "MAX_TOKENS")]
+
+    stt = STTFalso()
+    sesion, grabadora = await _montar_voz(call_id, stt)
+    await _turno(sesion, stt, "y de la medicación, ¿sigo igual?")
+
+    assert grabadora.bytes_audio > 0, "el paciente se quedó sin oír nada"
+    dicho = [e["texto"] for e in grabadora.eventos if e["tipo"] == "agente_habla"]
+    assert dicho and "equipo médico" in dicho[-1], dicho
+
+    await sesion.cerrar()
+
+
 class TTSLento(TTSFalso):
     """Como `TTSFalso`, pero tarda en sintetizar cada frase.
 

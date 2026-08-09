@@ -7,15 +7,22 @@ sobre el guion se lo come, así que atarse a él durante el desarrollo sería un
 error de logística, no de arquitectura.
 
 Qué motor implementa cada modo se declara en `.env` (`TTS_ENGINE_LOCAL` /
-`TTS_ENGINE_PREMIUM`); cuál de los dos modos está activo NO vive aquí ni en `.env`,
-sino en la tabla `app_settings`, para poder conmutarlo a mitad de llamada. Ese
-reparto lo resuelve `app/voice/voice_mode.py`; a este módulo nadie le pregunta qué
-modo hay.
+`TTS_ENGINE_PREMIUM`). Cuál de los dos modos está *activo* se guarda en la tabla
+`app_settings` y lo resuelve `app/voice/voice_mode.py`; a este módulo nadie le
+pregunta qué modo hay.
 
-Los motores locales siguen siendo la red de seguridad: si la red del venue falla
-durante la demo, `VoiceRouter` degrada a local él solo, sin que nadie toque nada. Y
-sostienen el argumento de que el sistema puede correr 100% on-prem si un hospital
-lo exige.
+OJO, porque el reparto anterior describe un diseño que HOY no está enchufado: el
+único que lee el modo activo es `voice_mode.VoiceRouter`, y **a `VoiceRouter` no
+lo construye nadie**. Los dos caminos que sintetizan de verdad —`pipeline_ws.py` y
+`servicios_pipecat.py`— llaman a `crear_motor(settings.tts_engine_local)` sin
+preguntar por el modo, así que hoy el interruptor de la consola cambia una fila de
+`app_settings` y nada más: el modo premium no es alcanzable desde una llamada, la
+degradación automática a local no llega a ocurrir y `tts_usage` no se escribe.
+Cambiar de motor hoy es cambiar `TTS_ENGINE_LOCAL` y reiniciar. Ver
+`docs/VERIFICACION.md`.
+
+Los motores locales siguen siendo la red de seguridad —el sistema puede correr
+100% on-prem si un hospital lo exige— y son, hoy, los únicos que se usan.
 
 TODAS las salidas se normalizan a PCM float32 mono a 24 kHz, para que el
 pipeline de voz no tenga que saber qué motor está detrás.
@@ -337,11 +344,17 @@ def _voz_piper() -> Path:
 
 
 def crear_motor(nombre: str) -> TTSEngine:
-    """Fábrica por nombre de motor.
+    """Fábrica por nombre de motor. Solo construye lo que le pidan.
 
-    Quien decide qué motor toca es `voice_mode.VoiceRouter`, según el modo
-    (local/premium) que esté activo en `app_settings`. Esta función solo construye
-    lo que le pidan.
+    Quién decide el nombre: hoy, `pipeline_ws.crear_router()` y
+    `servicios_pipecat`, que pasan `settings.tts_engine_local` fijo. El diseño
+    previsto era que decidiera `voice_mode.VoiceRouter` según el modo activo en
+    `app_settings`, pero nadie construye ese router todavía — ver la cabecera del
+    módulo.
+
+    Los nombres se despachan aquí y solo aquí, así que `PiperTTS`, `SayTTS` y
+    `CartesiaTTS` no aparecen usados en ningún `grep`: son las opciones del
+    interruptor, no código muerto.
     """
     s = get_settings()
     match nombre:

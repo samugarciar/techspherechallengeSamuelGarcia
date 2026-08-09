@@ -20,7 +20,7 @@ el agente lo aprende, lo que se borra lo olvida** — de forma verificable.
 | Orquestación de voz | Pipecat + `SmallWebRTCTransport` **recomendado**; hoy corre el WebSocket propio | Pipecat gana por solapar el STT con la espera de fin de turno (−379 ms), no por el barge-in — ver abajo. Lo montado hoy es el WebSocket propio, que es el que tiene cliente de navegador |
 | VAD / turnos | Silero VAD | ONNX en CPU. Cargado por `app/voice/vad.py`, sin Pipecat, para poder medirlo con audio inyectado; Pipecat lo trae también |
 | STT | Whisper `small` (MLX) + sesgo de vocabulario | 481 ms con la misma precisión clínica que `medium` a 1222 ms — ver abajo |
-| TTS | **Dos modos**: local (Kokoro) y premium (ElevenLabs), conmutables en caliente *(por API; el botón está pendiente)* | Flexibilidad de coste sin recompilar: gratis e ilimitado para operar, voz premium cuando la experiencia lo justifique |
+| TTS | **Dos modos**: local (Kokoro) y premium (ElevenLabs) *(hoy solo suena el local: ver abajo)* | Flexibilidad de coste sin recompilar: gratis e ilimitado para operar, voz premium cuando la experiencia lo justifique |
 | Vector DB | Postgres 16 + pgvector (HNSW) | Convierte «borrar = olvidar» en una propiedad ACID, no en disciplina del programador |
 | Embeddings | `BAAI/bge-m3` sobre MPS | 1024 dims, multilingüe fuerte; 24 ms por consulta |
 | Reranker | `bge-reranker-v2-m3`, top-8 | Discrimina nítido (0.993 vs 0.004), pero cuesta 585 ms: decisión abierta, ver abajo |
@@ -257,26 +257,33 @@ for f in scripts/spikes/out/*completa*.wav; do echo "$f"; afplay "$f"; done
 | `premium` | ElevenLabs Flash | por carácter | obligatoria | pruebas finales y demo |
 
 El modo activo **no vive en `.env`**: vive en la tabla `app_settings` y se conmuta
-por `PUT /api/settings/voice-mode`. Eso permite cambiarlo en caliente, incluso a
-mitad de una llamada, y hace del coste una palanca operativa en vez de una decisión
-de despliegue — un hospital puede operar en local por cumplimiento o presupuesto y
-subir a premium cuando lo justifique. **Sin botón en la consola todavía**: el
-alcance de la Fase 2 se cerró en la gestión de documentos, así que hoy el toggle se
-demuestra con `curl`.
+por `PUT /api/settings/voice-mode`. La idea es que el coste sea una palanca
+operativa en vez de una decisión de despliegue — un hospital puede operar en local
+por cumplimiento o presupuesto y subir a premium cuando lo justifique.
 
-Tres consecuencias de diseño:
+**Lo que de esto está construido hoy, y lo que no.** La pieza que lo une —
+`voice_mode.VoiceRouter`, que elige motor según el modo, degrada a local si el
+premium falla y anota cada síntesis en `tts_usage`— está escrita y **no la
+construye nadie**. Los dos caminos que sintetizan de verdad (`pipeline_ws.py` y
+`servicios_pipecat.py`) llaman a `crear_motor(TTS_ENGINE_LOCAL)` sin preguntar por
+el modo. Consecuencias, medidas en una llamada completa:
 
-- **Degradación automática.** Si el motor premium falla (red caída, cuota
-  agotada, API con problemas), `VoiceRouter` cae a local en vez de dejar al
-  paciente en silencio. En una demo en vivo eso convierte un fallo en un detalle
-  que nadie nota.
-- **Contabilidad.** Cada síntesis se anota en `tts_usage` con modo, caracteres,
-  latencia y segundos de audio, y `voice_mode.resumen_consumo()` lo agrega por
-  modo. Sin esto el toggle sería un interruptor a ciegas. El panel que lo enseñe
-  está pendiente, igual que el botón: hoy el dato se consulta con `psql`.
-- **El desarrollo no toca el free tier.** Son ~10.000 caracteres al mes; una
-  tarde iterando sobre el guion se los come. Por eso el modo por defecto es
-  local y premium se reserva para las pruebas finales.
+| Pieza | Estado |
+|---|---|
+| Los cinco motores tras una interfaz | **hecho** — Kokoro, Piper, `say`, ElevenLabs, Cartesia |
+| El modo activo en `app_settings`, con endpoint | **hecho** — `GET`/`PUT /api/settings/voice-mode` |
+| Que el modo activo decida la voz de una llamada | **no** — hoy siempre suena `TTS_ENGINE_LOCAL` |
+| Degradación automática a local si premium falla | **no** — vive en `VoiceRouter`, que nadie instancia |
+| Contabilidad en `tts_usage` | **no** — cero filas tras una llamada con cinco síntesis |
+| Botón en la consola y panel de consumo | **no** — la Fase 2 se cerró en documentos |
+
+Enchufarlo es una línea en cada uno de esos dos ficheros, pero empieza a gastar
+voz de pago, así que es una decisión y no un olvido. Mientras tanto, cambiar de
+motor es cambiar `TTS_ENGINE_LOCAL` y reiniciar.
+
+Lo que sí se sostiene sin nada de eso: **el desarrollo no toca el free tier**. Son
+~10.000 caracteres al mes; una tarde iterando sobre el guion se los come. Por eso
+el modo por defecto es local y premium se reserva para las pruebas finales.
 
 Añadir un motor es implementar `TTSEngine` en `backend/app/voice/tts.py`;
 Cartesia ya está incluido para compararlo con ElevenLabs en la ronda final.

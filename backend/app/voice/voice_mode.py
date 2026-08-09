@@ -79,6 +79,16 @@ class VoiceRouter:
     cae a local automáticamente en vez de dejar al paciente en silencio. En una
     demo en vivo esa degradación es la diferencia entre un fallo y un detalle
     que nadie nota.
+
+    **NADIE CONSTRUYE ESTA CLASE TODAVÍA**, y conviene saberlo antes de creerse el
+    párrafo de arriba. Los dos caminos que sintetizan de verdad —`pipeline_ws.py`
+    y `servicios_pipecat.py`— llaman a `crear_motor(settings.tts_engine_local)`
+    directamente, así que hoy no hay degradación automática, el modo premium no es
+    alcanzable desde una llamada y `_anotar()` nunca corre (comprobado: cero filas
+    en `tts_usage` tras una llamada completa con cinco síntesis).
+
+    Enchufarlo es una línea en cada uno de esos dos sitios, pero cambia
+    comportamiento —empezaría a salir voz de pago— así que es decisión de Samuel.
     """
 
     def __init__(self) -> None:
@@ -153,8 +163,12 @@ async def resumen_consumo() -> list[dict]:
     Es la respuesta a la única pregunta que hace útil el toggle de voz —¿qué me
     está costando premium y qué gano?— y hoy **no la consume nadie**: el panel que
     la enseñe está pendiente, porque el alcance de la Fase 2 se cerró en la gestión
-    de documentos. Se mantiene escrita porque `tts_usage` ya se está llenando en
-    cada síntesis y sin esta agregación ese dato no se puede leer sin `psql`.
+    de documentos.
+
+    Y hoy además devolvería una lista vacía siempre: quien llena `tts_usage` es
+    `VoiceRouter._anotar()`, y nadie construye `VoiceRouter` (ver arriba). Se
+    mantiene escrita porque es la mitad que ya está hecha del panel de consumo, no
+    porque haya datos que agregar.
     """
     async with connection() as conn:
         cur = await conn.execute(

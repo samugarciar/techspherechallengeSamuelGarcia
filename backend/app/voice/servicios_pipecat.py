@@ -122,8 +122,11 @@ class MotorLocalTTS(TTSService):
     agregador que lo haga — y esa es una de las cosas que Pipecat sí regala.
 
     Se acepta un motor ya construido para que el spike pueda medir con `say`
-    (siempre disponible) o con Kokoro sin tocar la base de datos. En producción
-    quien decide es `VoiceRouter`, que además contabiliza el gasto en `tts_usage`.
+    (siempre disponible) o con Kokoro sin tocar la base de datos. Sin él se cae a
+    `settings.tts_engine_local`, que es lo que se usa siempre hoy: el diseño
+    previsto era que decidiera `VoiceRouter` según el modo activo —y que de paso
+    contabilizara el gasto en `tts_usage`— pero nadie lo construye todavía. Ver
+    `app/voice/voice_mode.py`.
     """
 
     def __init__(self, *, motor: TTSEngine | None = None, **kwargs) -> None:

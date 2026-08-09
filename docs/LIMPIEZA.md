@@ -133,6 +133,13 @@ poder medirlo sin transporte.
 - **La contabilidad de TTS.** «con esto **la consola muestra** qué está costando
   premium». Tampoco. `tts_usage` se llena en cada síntesis y
   `voice_mode.resumen_consumo()` lo agrega, pero el panel está pendiente.
+
+  > **Anotación del 2026-08-09 (revisión posterior).** La segunda frase es falsa:
+  > `tts_usage` **no** se llena. Quien escribe esa tabla es `VoiceRouter._anotar()`
+  > y nadie construye `VoiceRouter`; medido, cero filas tras una llamada completa
+  > con cinco síntesis. Este apartado acertó en los otros dos síntomas (sin botón,
+  > sin panel) y falló en la causa común: el toggle de voz no está enchufado a
+  > ninguna síntesis. Ver `docs/VERIFICACION.md` §4.
 - **El estado de las fases.** Fase 3 marcada como pendiente («falta elegir por
   medición» — ya se eligió) y Fase 5 sin marcar estando construida, cosida y
   probada. Actualizadas, con la salvedad real: falta el micrófono.
@@ -229,7 +236,7 @@ llama nadie» y la respuesta a «¿por qué se escribió esto?» decía que se q
 | `scripts/spikes/**` | Nadie los llama y son la evidencia que sostiene las decisiones del README. Solo se corrigió una cabecera que mentía |
 | `eval/corpus_prueba/`, `eval/medir_reranker.py`, `scripts/demo_*.py` | Guion de demo y prueba de regresión a la vez; `medir_reranker.py` es lo que cerrará la decisión del reranker |
 | `retrieval.solo_denso()` | Búsqueda puramente vectorial, sin un solo consumidor. Se queda porque su motivo sigue vigente: el argumento de que la búsqueda híbrida hace falta es hoy una afirmación sin medir, y ésta es la mitad que falta para convertirla en un número en la Fase 6. El docstring ahora avisa de que no la llama nadie |
-| `voice_mode.resumen_consumo()` | Sin consumidores porque el panel de consumo no se ha construido (la Fase 2 se cerró en documentos). `tts_usage` sí se está llenando en cada síntesis, así que sin esta agregación el dato solo se lee con `psql`. Docstring corregido para que no prometa un panel que no existe |
+| `voice_mode.resumen_consumo()` | Sin consumidores porque el panel de consumo no se ha construido (la Fase 2 se cerró en documentos). ~~`tts_usage` sí se está llenando en cada síntesis~~ **(falso; ver la anotación del §2.6)**, así que sin esta agregación el dato solo se lee con `psql`. Docstring corregido para que no prometa un panel que no existe |
 | Tabla `traces` del schema | Creada y sin escribir. **No se toca**: borrarla obliga a recrear las bases de datos (y el propio `App.tsx` deja la ruta `/trazas` anotada como pendiente). Lo que se ha arreglado es el README, que la daba por funcionando |
 | Los mocks del frontend (`api/mock/`, `api/llamadas/mock/`) | Deliberados, documentados, y la pantalla avisa con la insignia «Datos simulados» |
 | `PiperTTS`, `SayTTS`, `CartesiaTTS` | Solo los construye `crear_motor()` por nombre, así que ningún `grep` los ve usados. Son las opciones del interruptor: `say` es el que usan la demo de llamada completa y el arnés de voz |

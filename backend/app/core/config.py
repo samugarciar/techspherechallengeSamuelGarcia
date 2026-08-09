@@ -36,12 +36,16 @@ class Settings(BaseSettings):
     # mismos aciertos que `medium` (1222 ms). Medido en M4.
     stt_model: str = "mlx-community/whisper-small-mlx"
 
-    # Dos modos de voz conmutables desde la consola (tabla app_settings), no
-    # desde aquí: el admin cambia local <-> premium en caliente, incluso a
-    # mitad de llamada. Aquí solo se declara QUÉ motor implementa cada modo.
+    # Aquí se declara QUÉ motor implementa cada modo; cuál está activo se guarda
+    # en `app_settings` y se cambia por `PUT /api/settings/voice-mode`.
     #
     #   local   -> gratis, ilimitado, sin red. Es el modo de desarrollo.
     #   premium -> mejor voz, coste por carácter. Para pruebas finales y demo.
+    #
+    # CUIDADO: hoy el modo activo no llega a ninguna síntesis. `pipeline_ws` y
+    # `servicios_pipecat` usan `tts_engine_local` sin preguntar, porque nadie
+    # construye `voice_mode.VoiceRouter`. O sea que el motor que suena en una
+    # llamada es SIEMPRE `tts_engine_local`, y cambiarlo pide reiniciar.
     tts_engine_local: Literal["kokoro", "piper", "say"] = "kokoro"
     tts_engine_premium: Literal["elevenlabs", "cartesia", "kokoro"] = "elevenlabs"
     tts_voice: str = "ef_dora"

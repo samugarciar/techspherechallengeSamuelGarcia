@@ -62,10 +62,15 @@ def main() -> int:
         try:
             salud = c.get(f"{a.api}/health", timeout=5.0).json()
         except httpx.HTTPError:
+            # La base es `postop`, que es la que crea `docker compose up -d` y la
+            # que siembra el paso 3 del README. Aquí llegó a poner `postop_wt`
+            # —una base de trabajo que solo existía en la máquina donde se
+            # escribió—, y este mensaje es justo el que lee quien acaba de clonar
+            # el repositorio y todavía no tiene ninguna otra.
             print(f"No hay ninguna API escuchando en {a.api}.\n"
                   f"Levántala con:\n"
                   f"  cd backend && DATABASE_URL=postgresql://postop:postop@"
-                  f"localhost:5433/postop_wt uv run uvicorn app.main:app --port 8000\n"
+                  f"localhost:5433/postop uv run uvicorn app.main:app --port 8000\n"
                   f"Y el worker en otra terminal:\n"
                   f"  cd backend && DATABASE_URL=… uv run python -m app.workers.ingest_worker")
             return 1

@@ -129,9 +129,22 @@ app.include_router(llamadas.router, prefix="/api")
 # El agente clínico entra por INYECCIÓN, no por un import dentro del pipeline.
 # `crear_router(fabrica_llamada=…)` recibe una función que, dado el `call_id` de
 # la query, devuelve el agente de esa llamada concreta. Aquí es el único sitio
-# donde las Fases 3 y 4 se conocen: `app/voice/**` no importa `app/agent/**` ni
-# al revés, así que el arnés de medición sigue pudiendo montar el mismo bucle de
-# voz con `ClienteLLMFalso` y comparar manzanas con manzanas.
+# donde las Fases 3 y 4 se conocen, así que el arnés de medición sigue pudiendo
+# montar el mismo bucle de voz con `ClienteLLMFalso` y comparar manzanas con
+# manzanas.
+#
+# La frontera, dicha con precisión, porque «no se importan» a secas no es cierto
+# y quien lo compruebe con grep se va a llevar un susto:
+#   · `app/voice/**` importa `app/agent/llm_client` —la INTERFAZ (`LLMClient`,
+#     `Mensaje`, `RespuestaLLM`), un módulo sin base de datos ni SDK— y NUNCA
+#     `app/agent/agente`, que es el agente clínico. Eso es lo que hace que
+#     `ClienteLLMFalso` pueda ocupar el mismo hueco.
+#   · `app/agent/agente.py` importa `dividir_en_frases` de `app/voice/tts`, y lo
+#     hace DENTRO de `stream()` a propósito: a nivel de módulo arrastraría numpy
+#     al despliegue de solo texto.
+# Comprobado el 2026-08-09 volviendo a lanzar el arnés: reproduce los números
+# publicados (1.977 ms contra 1.664 ms hasta el primer audio; barge-in 96,6 ms
+# contra 86,8 ms). Ver docs/VERIFICACION.md §5.
 #
 # Sin `?call_id=…` la sesión cae al LLM falso: es la «sesión suelta sin
 # persistir» del contrato, que es lo que usa scripts/spikes/cliente_voz/.
