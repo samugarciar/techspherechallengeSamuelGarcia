@@ -154,6 +154,17 @@ export function useLlamadaVoz(): LlamadaVoz {
           if (mensaje.tipo === 'fin') {
             colgadaPorNosotros.current = true
             pararMicrofono()
+            // Soltar el WebSocket en el acto, y no esperar a que el usuario
+            // salga de la pantalla: el servidor sella la fila de `calls` y
+            // termina de escribir la transcripción cuando se va la conexión, así
+            // que dejarla abierta deja la llamada «en curso» en el historial y
+            // con la duración subiendo.
+            //
+            // El reproductor NO se toca: la despedida del agente ya está en su
+            // buffer y todavía le queda por sonar. Cerrarlo aquí cortaría a
+            // mitad justo la frase que cierra la llamada.
+            sesion.current?.cerrar()
+            sesion.current = null
             setSituacion('terminada')
           }
 

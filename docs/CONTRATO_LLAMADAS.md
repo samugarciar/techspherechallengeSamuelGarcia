@@ -183,7 +183,69 @@ volver a consultarlos. Consecuencia visible: si el backend se reinicia a mitad d
 llamada, el turno siguiente da `404 llamada_no_encontrada`. Con llamadas de tres
 minutos y un solo proceso, es preferible a cubrirlo a medias.
 
-### 7. Recomendación pendiente de Samuel: una séptima herramienta
+### 7bis. La integración: quién emite cada mensaje del WebSocket
+
+La tabla de arriba dice *cuándo* se emite cada mensaje pero no *quién*, y eso
+resultó ser la pregunta importante: las citas y las banderas rojas las conoce el
+agente clínico, no el bucle de voz, y el bucle de voz no puede importarlo sin
+atarse a la Fase 4.
+
+| `tipo` | Lo emite | Dónde |
+|---|---|---|
+| `listo` | el endpoint | al aceptar el WebSocket |
+| `estado` | `SesionVoz` | las transiciones de fase que ya tenía |
+| `transcripcion` | `SesionVoz` | donde resuelve el STT |
+| `citas` | `SesionDeVoz` | donde el agente las produce, antes del audio |
+| `bandera_roja` | `SesionDeVoz` | ídem, en cuanto dispara el detector |
+| `metricas` | `SesionVoz` | fin de turno, con las etapas ya medidas |
+| `fin` | `SesionVoz` | preguntándole a la llamada si ha terminado |
+
+El enganche es el protocolo `LlamadaEnCurso` (`app/voice/pipeline_ws.py`), que
+implementa `SesionDeVoz` (`app/api/llamadas.py`) y conecta `app/main.py` con
+`crear_router(fabrica_llamada=…)`. `app/voice/**` no importa `app/agent/**` en
+ningún punto: es lo que permite que el arnés de medición siga montando el mismo
+bucle con `ClienteLLMFalso`.
+
+`metricas` publica `stt`, `llm`, `tts` y `total` (= hasta el primer audio). **No
+publica `retrieval`**, que el panel de la pantalla sí contempla: el pipeline de
+voz no mide el RAG —lo mide el agente por dentro— y mandar un cero diría «la
+búsqueda tardó 0 ms» en vez de «esto no lo mido yo».
+
+### 7ter. Cuatro decisiones que la integración obligó a tomar
+
+1. **El saludo lo pronuncia el servidor al conectar el WebSocket.** `POST
+   /api/calls` lo devuelve escrito, pero el navegador no tiene TTS: sin esto la
+   llamada empezaba en silencio y el paciente no sabía que había alguien. Va como
+   tarea cancelable, así que se le puede interrumpir como a cualquier turno.
+
+2. **Un `call_id` sin agente vivo cierra la conexión** con `fin`/`cortada` en vez
+   de caer al LLM falso. Es lo que pasa si el backend se reinicia a mitad de
+   llamada (§Cambios 6). Continuar daría una llamada que suena bien y no guarda
+   nada, que es el fallo silencioso de siempre.
+
+3. **Colgar el WebSocket sella la llamada** como `cortada` si el agente no la
+   había dado por terminada. Sin esto una llamada abandonada se queda `en_curso`
+   para siempre y con la duración subiendo. *Consecuencia:* el botón «Reconectar»
+   de la pantalla ya no puede retomar una llamada, porque al irse la conexión el
+   agente se descarta. **Pendiente de Samuel:** si prefiere una ventana de gracia
+   para reconectar, es un temporizador en `SesionDeVoz.cerrar()`.
+
+4. **Solo un WebSocket por llamada.** El segundo se rechaza. Dos conexiones sobre
+   el mismo `AgenteLlamada` entrelazarían los turnos en un único historial.
+
+### 8. Un mensaje más del que la tabla publica: `parar`
+
+Ya estaba en el bucle de voz y el frontend ya lo maneja; se anota aquí porque no
+figuraba en la tabla y es **obligatorio**: es el único mensaje que vacía el
+buffer del cliente en un barge-in. Cortar la síntesis en el servidor no calla al
+agente si el navegador tiene dos segundos de audio encolados.
+
+Siguen emitiéndose además `paciente_habla`, `fin_de_turno`, `agente_habla` y
+`fin_audio`, que son los del bucle de voz de la Fase 3. `estado` no los sustituye:
+son el mismo hecho contado a dos clientes distintos, y retirarlos rompería
+`scripts/spikes/cliente_voz/` sin avisar.
+
+### 9. Recomendación pendiente de Samuel: una séptima herramienta
 
 `obtener_paciente` devuelve la fecha de nacimiento para poder compararla con la
 que diga el paciente. Que el modelo la vea significa que *podría* leerla en voz
@@ -192,3 +254,21 @@ prompt, que es una petición y no una garantía. La forma sólida es
 `verificar_identidad(fecha_dicha) -> {coincide: bool}`, con la comparación en
 Postgres y el dato nunca en el contexto del modelo. No la he añadido porque el
 contrato fija seis herramientas. Anotado también en `eval/guion_llamada.md`.
+
+**2026-08-09 — ya no es hipotético: ocurre.** En las dos ejecuciones de
+`scripts/demo_llamada_completa.py` contra Gemini 2.5 Flash, con el prompt real y
+su regla «Nunca le digas su fecha de nacimiento […] antes de que la persona se
+identifique», el agente contestó:
+
+> «Gracias. Según mi registro, su fecha de nacimiento es el tres de julio de mil
+> novecientos noventa y dos. ¿Es correcto?»
+
+El disparador es que el guion de la demo dice **una fecha que no coincide** con
+la del sistema. Ante el desajuste el modelo «ayuda» leyendo la buena, que es
+exactamente el caso en que no debe: quien está al teléfono acaba de demostrar que
+no sabe la fecha del paciente. Un impostor obtiene el dato preguntando mal.
+
+La regla del prompt está bien escrita y aun así se incumple, que es el argumento
+entero de por qué esto tiene que ser una herramienta y no una instrucción.
+**Decisión para Samuel:** añadir `verificar_identidad` (rompe la cifra de seis
+herramientas del contrato) o dejarlo documentado como límite conocido.
