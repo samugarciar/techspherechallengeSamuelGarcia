@@ -1,3 +1,4 @@
+import { lista, numero, numeroOpcional, objeto, texto, textoOpcional } from '@/api/coercion'
 import type {
   Cita,
   CirugiaResumen,
@@ -25,30 +26,6 @@ import type {
  * Hay un hueco real del contrato que se resuelve aquí: `turnos` es un NÚMERO en
  * `GET /api/calls` y una LISTA en `GET /api/calls/{id}`. Se aceptan los dos.
  */
-
-function texto(valor: unknown, porDefecto = ''): string {
-  return typeof valor === 'string' ? valor : porDefecto
-}
-
-function textoOpcional(valor: unknown): string | null {
-  return typeof valor === 'string' && valor.trim() !== '' ? valor : null
-}
-
-function numero(valor: unknown, porDefecto = 0): number {
-  return typeof valor === 'number' && Number.isFinite(valor) ? valor : porDefecto
-}
-
-function numeroOpcional(valor: unknown): number | null {
-  return typeof valor === 'number' && Number.isFinite(valor) ? valor : null
-}
-
-function objeto(valor: unknown): Record<string, unknown> {
-  return valor !== null && typeof valor === 'object' ? (valor as Record<string, unknown>) : {}
-}
-
-function lista(valor: unknown): unknown[] {
-  return Array.isArray(valor) ? valor : []
-}
 
 // ---------------------------------------------------------------------------
 // Pacientes

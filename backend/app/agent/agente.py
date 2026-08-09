@@ -18,11 +18,14 @@ dependería de un muestreo. Yendo antes, cuando el modelo entra ya no decide nad
 sobre la alarma; solo redacta lo que el protocolo dice que hay que decir.
 
 ── Por qué esta clase implementa `LLMClient` ────────────────────────────────
-`app/voice/**` es de otro agente y no se puede tocar. `SesionVoz` acepta
-cualquier objeto con la interfaz `LLMClient` y hoy recibe un `ClienteLLMFalso`.
-Implementando esa misma interfaz, el agente real entra en el bucle de voz
-cambiando un argumento —`SesionVoz(llm=AgenteLlamada(...))`— sin una sola línea
-nueva en el pipeline.
+Para que el bucle de voz pueda usar el agente clínico sin importarlo. `SesionVoz`
+acepta cualquier objeto con la interfaz `LLMClient`, así que el agente real entra
+cambiando un argumento —`crear_router(fabrica_llamada=…)` en `app/main.py`, el
+único sitio donde las Fases 3 y 4 se conocen— sin una línea nueva en el pipeline.
+
+La alternativa, que el pipeline importara `app/agent/**`, se descartó por lo que
+costaba: `ClienteLLMFalso` dejaría de poder ocupar este hueco y el arnés con el
+que se midió Pipecat contra el WebSocket propio ya no montaría el mismo bucle.
 
 El precio es una rareza que conviene tener escrita: `stream(sistema, mensajes)`
 **ignora** los dos argumentos. El sistema lo construye el agente (depende del

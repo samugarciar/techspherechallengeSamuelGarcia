@@ -1,12 +1,14 @@
+import { numero, numeroOpcional, objeto, texto, textoOpcional } from '@/api/coercion'
 import type { Documento, DocumentoConTrozos, EstadoDocumento, TrozoPrevio } from '@/types/api'
 
 /**
  * Normalización defensiva de lo que llega por la red.
  *
- * El backend se está escribiendo en paralelo contra el mismo contrato, así que
- * habrá un rato en que un campo llegue con otro nombre o sin llegar. La regla es
- * que una discrepancia degrade la celda («—») y nunca tumbe la pantalla: en una
- * demo, una tabla con un hueco se explica; una pantalla en blanco, no.
+ * Nació porque backend y frontend se escribían en paralelo contra el mismo
+ * contrato y algún campo iba a llegar con otro nombre o sin llegar. Se queda
+ * porque la regla que impone sigue valiendo con el backend ya escrito: una
+ * discrepancia degrada la celda («—») y nunca tumba la pantalla. En una demo,
+ * una tabla con un hueco se explica; una pantalla en blanco, no.
  */
 
 const ESTADOS_VALIDOS: readonly string[] = [
@@ -19,40 +21,24 @@ const ESTADOS_VALIDOS: readonly string[] = [
   'superseded',
 ]
 
-function texto(valor: unknown, porDefecto = ''): string {
-  return typeof valor === 'string' ? valor : porDefecto
-}
-
-function textoOpcional(valor: unknown): string | null {
-  return typeof valor === 'string' && valor.trim() !== '' ? valor : null
-}
-
-function entero(valor: unknown, porDefecto = 0): number {
-  return typeof valor === 'number' && Number.isFinite(valor) ? valor : porDefecto
-}
-
-function enteroOpcional(valor: unknown): number | null {
-  return typeof valor === 'number' && Number.isFinite(valor) ? valor : null
-}
-
 function estado(valor: unknown): EstadoDocumento {
   return ESTADOS_VALIDOS.includes(valor as string) ? (valor as EstadoDocumento) : 'uploaded'
 }
 
 export function normalizarDocumento(bruto: unknown): Documento {
-  const d = (bruto ?? {}) as Record<string, unknown>
+  const d = objeto(bruto)
   return {
     id: texto(d.id),
     filename: texto(d.filename, 'documento'),
     title: textoOpcional(d.title),
     mime_type: texto(d.mime_type),
-    size_bytes: entero(d.size_bytes),
+    size_bytes: numero(d.size_bytes),
     sha256: texto(d.sha256),
     status: estado(d.status),
     error: textoOpcional(d.error),
-    chunks_count: entero(d.chunks_count),
-    embedded_count: entero(d.embedded_count),
-    pages: enteroOpcional(d.pages),
+    chunks_count: numero(d.chunks_count),
+    embedded_count: numero(d.embedded_count),
+    pages: numeroOpcional(d.pages),
     supersedes_id: textoOpcional(d.supersedes_id),
     created_at: texto(d.created_at),
     updated_at: texto(d.updated_at),
@@ -66,17 +52,17 @@ export function normalizarDocumento(bruto: unknown): Documento {
  * §Cambios sobre el contrato).
  */
 export function normalizarTrozo(bruto: unknown): TrozoPrevio {
-  const t = (bruto ?? {}) as Record<string, unknown>
+  const t = objeto(bruto)
   return {
-    ordinal: enteroOpcional(t.ordinal),
+    ordinal: numeroOpcional(t.ordinal),
     heading: textoOpcional(t.heading),
     content: texto(t.content ?? t.contenido ?? t.texto ?? t.text),
-    page: enteroOpcional(t.page),
+    page: numeroOpcional(t.page),
   }
 }
 
 export function normalizarDetalle(bruto: unknown): DocumentoConTrozos {
-  const d = (bruto ?? {}) as Record<string, unknown>
+  const d = objeto(bruto)
   const previa = Array.isArray(d.chunks_preview) ? d.chunks_preview : []
   return {
     ...normalizarDocumento(bruto),

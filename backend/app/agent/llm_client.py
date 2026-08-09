@@ -1,9 +1,13 @@
 """Adaptador de LLM: una interfaz, dos proveedores.
 
-Existe por una razón concreta: si en la demo el TTFT de Gemini estorba, cambiar
-a Groq debe ser editar una variable de entorno, no refactorizar el agente. Groq
-sirve respuestas con un TTFT bastante menor; Gemini tiene mejor español clínico
-y un tool calling más fiable. Cuál gana se decide midiendo, no discutiendo.
+Existe para que cambiar de proveedor sea editar una variable de entorno y no
+refactorizar el agente. El motivo original era otro —Groq como escape de latencia
+si el TTFT de Gemini estorbaba— y la medición lo tumbó: Groq gana 91 ms de TTFT,
+dentro del ruido, y en el turno completo con *tool calling*, que es lo que este
+agente hace de verdad, su free tier da timeouts y reintentos (22,5 s de mediana
+frente a 1,2 s de Gemini). Groq queda como **plan B de disponibilidad**, para
+cuando Gemini no esté, no para cuando Gemini vaya lento. Detalle en el README
+§«El LLM: el último número que faltaba».
 
 Ambos proveedores hablan del mismo par de tipos (`Mensaje`, `RespuestaLLM`) y de
 un esquema de herramientas en formato JSON Schema, que es el mínimo común
@@ -15,7 +19,7 @@ por primera vez (8 de agosto) salieron tres cosas, y solo una era la que se
 sospechaba:
 
 **1. El `await` sobre `generate_content_stream` NO estaba mal.** Era la sospecha
-principal y resultó falsa para `google-genai>=2`: ahí `aio.models
+principal y resultó falsa para `google-genai>=1`: ahí `aio.models
 .generate_content_stream` es una corrutina que *devuelve* un `AsyncIterator`
 (`inspect.iscoroutinefunction(...) is True`), así que hay que esperarla y luego
 iterar, que es justo lo que el código hacía. En las versiones 0.x sí era un
@@ -103,9 +107,10 @@ class Mensaje:
     """Solo en `role="assistant"`: las llamadas que el modelo emitió en ese turno.
 
     Sin esto el historial de una conversación con herramientas es inválido —ver
-    el punto 2 de la cabecera del módulo—. Va al final del dataclass porque
-    `Mensaje("user", texto)` se construye posicionalmente en `app/voice/**`, que
-    es de otro agente y no se puede tocar.
+    el punto 2 de la cabecera del módulo—. Va al final del dataclass y no en un
+    sitio más lógico porque `app/voice/**` construye `Mensaje("user", texto)`
+    posicionalmente: meterlo antes cambiaría en silencio el significado de esas
+    llamadas.
     """
 
 

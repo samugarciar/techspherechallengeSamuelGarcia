@@ -114,8 +114,8 @@ corregidos por Samuel el reparto es otro:
 | Embedding de la consulta | 24 ms | **25 ms** | medición de Samuel contra la API real |
 | Retrieval híbrido | *pendiente* | **3 ms** | ídem |
 | Reranker top-8 | 114 ms | **585 ms** | ídem — el README mide con pasajes de 250 caracteres; con fragmentos reales de 1.400 el cross-encoder cuesta 5× |
-| LLM TTFT | ~300-600 ms | 400 ms (simulado) | sin API key |
-| TTS 1ª frase | 461 ms (Kokoro) | 530 ms (`say`) | Kokoro no está instalado, ver §4 |
+| LLM TTFT | ~300-600 ms | 400 ms (simulado) | sin API key entonces; medido después, 462 ms |
+| TTS 1ª frase | 461 ms (Kokoro) | 530 ms (`say`) | medido con `say`; Kokoro remedido en 196-303 ms, ver §4 |
 | **Total hasta el primer audio** | ≈1,4-1,7 s | **≈2,2 s** | con el rerank arreglado |
 
 Cálculo del total, Opción A y suponiendo el reranker corregido:
@@ -286,6 +286,11 @@ propósito. No hace falta: no vamos a usar ese servicio (§5).
 
 ### El TTS local por defecto no está instalado (afecta a las dos opciones)
 
+> **Corregido el 2026-08-08, después de escribir esto:** `kokoro` ya está en
+> `backend/pyproject.toml` y el modo `local` arranca. Lo de abajo se conserva
+> porque es de donde salió el hallazgo y porque explica por qué todas las cifras
+> de esta comparativa están tomadas con `say`.
+
 `TTS_ENGINE_LOCAL=kokoro` es el valor por defecto en `config.py` y en `.env`, y
 **`kokoro` no figura en `backend/pyproject.toml`**. Consecuencia práctica:
 `crear_motor("kokoro")` lanza `ModuleNotFoundError`, así que hoy el modo `local`
@@ -428,7 +433,7 @@ real, porque exige un navegador.
 | **Transporte WebRTC de verdad** | `SmallWebRTCTransport` necesita una oferta SDP de un navegador. La medición usa un transporte inyectado, que es el mismo `BaseInputTransport` pero sin negociación ni jitter de red | Montar `POST /api/voz/offer` y abrir la página |
 | **Ritmo de salida de WebRTC** | El transporte medido adelantó ~5 s de audio; el de WebRTC, con `auto_silence` activo, puede ir a ritmo real y cambiar cuánto buffer hay que vaciar (no el instante del corte, que lo fija el VAD) | Misma prueba con navegador |
 | **Umbral de 640 ms con habla real** | Las pausas están simuladas con `[[slnc]]` de `say`. Una persona dudando de verdad hace pausas más largas y más irregulares | Grabar 5 turnos hablando con normalidad y volver a pasar el barrido del escenario 3 |
-| **Calidad percibida de la voz** | Kokoro no está instalado (§dependencias) y todo se midió con `say` Mónica | Instalar `kokoro` y repetir |
-| **TTFT real del LLM** | `GEMINI_API_KEY` vacía | Rellenarla y repetir el escenario `turno` |
+| **Calidad percibida de la voz** | Todo se midió con `say` Mónica. *(Kokoro ya es dependencia desde el 2026-08-08; queda solo escucharlo)* | `--tts kokoro` y escuchar |
+| **TTFT real del LLM** | La comparativa usa `ClienteLLMFalso` a 400 ms fijos, a propósito, para que la red de Google no decida cuál de las dos opciones gana. *(El TTFT real ya está medido aparte: 462 ms con Gemini 2.5 Flash y el razonamiento apagado — README §El LLM)* | Repetir el escenario `turno` con `crear_cliente()` |
 
 Los pasos concretos están en `scripts/spikes/cliente_voz/README.md`.

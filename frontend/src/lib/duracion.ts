@@ -1,4 +1,11 @@
-/** Duraciones de llamada. Fichero aparte de `formato.ts` para no tocar el suyo. */
+/**
+ * Duraciones de llamada, en las tres formas que la pantalla necesita: reloj de la
+ * transcripción, duración total del historial y días desde la cirugía.
+ *
+ * Aparte de `formato.ts` porque aquello formatea magnitudes sueltas —bytes,
+ * fechas, milisegundos— y esto formatea el paso del tiempo *dentro de una
+ * llamada*, que es donde se decide si se lee «2:07» o «3 min 4 s».
+ */
 
 /** Sello de tiempo dentro de la llamada: `2:07`. */
 export function reloj(ms: number): string {

@@ -17,19 +17,19 @@ el agente lo aprende, lo que se borra lo olvida** — de forma verificable.
 | Capa | Elección | Por qué |
 |---|---|---|
 | LLM | Gemini 2.5 Flash · Groq Llama de repuesto | Mejor español clínico y tool calling fiable del conjunto permitido; medido, Groq solo gana 91 ms de TTFT y su free tier da timeouts con tool calling, así que queda como plan B de disponibilidad, no de latencia |
-| Orquestación de voz | Pipecat + `SmallWebRTCTransport` | Resuelve barge-in y fin de turno, que es el trabajo difícil; WebRTC P2P sin SFU ni nube |
-| VAD / turnos | Silero VAD | ONNX en CPU, ya integrado en Pipecat |
+| Orquestación de voz | Pipecat + `SmallWebRTCTransport` **recomendado**; hoy corre el WebSocket propio | Pipecat gana por solapar el STT con la espera de fin de turno (−379 ms), no por el barge-in — ver abajo. Lo montado hoy es el WebSocket propio, que es el que tiene cliente de navegador |
+| VAD / turnos | Silero VAD | ONNX en CPU. Cargado por `app/voice/vad.py`, sin Pipecat, para poder medirlo con audio inyectado; Pipecat lo trae también |
 | STT | Whisper `small` (MLX) + sesgo de vocabulario | 481 ms con la misma precisión clínica que `medium` a 1222 ms — ver abajo |
-| TTS | **Dos modos**: local (Kokoro) y premium (ElevenLabs), conmutables desde la consola | Flexibilidad de coste sin recompilar: gratis e ilimitado para operar, voz premium cuando la experiencia lo justifique |
+| TTS | **Dos modos**: local (Kokoro) y premium (ElevenLabs), conmutables en caliente *(por API; el botón está pendiente)* | Flexibilidad de coste sin recompilar: gratis e ilimitado para operar, voz premium cuando la experiencia lo justifique |
 | Vector DB | Postgres 16 + pgvector (HNSW) | Convierte «borrar = olvidar» en una propiedad ACID, no en disciplina del programador |
 | Embeddings | `BAAI/bge-m3` sobre MPS | 1024 dims, multilingüe fuerte; 24 ms por consulta |
 | Reranker | `bge-reranker-v2-m3`, top-8 | Discrimina nítido (0.993 vs 0.004), pero cuesta 585 ms: decisión abierta, ver abajo |
 | Búsqueda | Híbrida: denso + FTS español + RRF | El léxico acierta «cefalexina 500 mg»; el denso acierta «¿me puedo bañar?» |
-| Parsing | Docling (PyMuPDF de respaldo) | Conserva la jerarquía de secciones, de la que depende todo el troceado |
+| Parsing | PyMuPDF en `.pdf`, Docling en `.docx`; cada uno respalda al otro | Lo que decide es la jerarquía de secciones, de la que depende todo el troceado: PyMuPDF acierta 25/25 niveles y Docling 3/25 — al revés de lo que asumía el plan. En `.docx` se invierte, porque Docling lee el nivel del estilo del párrafo en vez de inferirlo del tamaño de letra |
 | Cola de ingesta | Postgres `FOR UPDATE SKIP LOCKED` | El estado del job vive en la misma transacción que el documento |
 | Backend | FastAPI | Mismo lenguaje que Pipecat y el pipeline RAG |
-| Frontend | React + Vite + Tailwind + shadcn/ui | Dos vistas: `/call` y `/admin` |
-| Trazas | Tabla `traces` en Postgres | Ver «Langfuse» abajo |
+| Frontend | React + Vite + Tailwind + shadcn/ui | Tres vistas: `/admin`, `/call` y `/calls` |
+| Trazas | Tabla `traces` en Postgres *(schema creado, sin escribir todavía)* | Ver «Langfuse» abajo |
 
 ### Las tres decisiones que necesitan justificación
 
@@ -73,7 +73,7 @@ se midió todo esto, y el banco de pruebas con micrófono.
 | **XTTS-v2** | Licencia CPML (no comercial) y lento en Apple Silicon |
 | **Vosk** | Streaming real, pero precisión en español muy inferior — inaceptable con terminología clínica |
 | **LiveKit Agents** | Más maduro y con camino a telefonía real (SIP), pero exige servidor propio y emisión de tokens: demasiada infra para la ventana. Es el siguiente paso natural |
-| **Langfuse self-hosted** | v3 arrastra ClickHouse + Redis + MinIO. Esta máquina tiene 16 GB compartidos con Whisper, bge-m3 y el reranker. Las trazas van a una tabla de Postgres: ~0 RAM y se muestran en la propia consola |
+| **Langfuse self-hosted** | v3 arrastra ClickHouse + Redis + MinIO. Esta máquina tiene 16 GB compartidos con Whisper, bge-m3 y el reranker. Las trazas van a una tabla de Postgres (`traces`): ~0 RAM. La tabla está en el schema y nadie escribe en ella todavía — hoy las latencias por etapa viajan en `call_turns.latencies` y en el `ms` de `/api/rag/query`, que es lo que la consola y la pantalla de llamada pintan |
 | **Phi mini local** | Sirve para demostrar operación sin red, pero tool calling frágil y compite por la GPU con Whisper y el TTS |
 
 ---
@@ -81,7 +81,8 @@ se midió todo esto, y el banco de pruebas con micrófono.
 ## Presupuesto de latencia
 
 Medido en **MacBook Air M4, 16 GB**, mediana de 3-5 ejecuciones tras calentar.
-Todo lo local se midió de verdad; el LLM es una estimación hasta tener API key.
+Todo se midió de verdad, el LLM incluido: el 9 de agosto, contra la API real y con
+el prompt de sistema del agente — ver §El LLM más abajo.
 
 | Etapa | Medido | Nota |
 |---|---:|---|
@@ -92,7 +93,7 @@ Todo lo local se midió de verdad; el LLM es una estimación hasta tener API key
 | Reranker — bge-reranker-v2-m3, top-8 | **585 ms** | ver abajo: el mayor bloque del pipeline |
 | LLM TTFT — Gemini 2.5 Flash | **462 ms** | con el prompt del agente y el razonamiento apagado — ver abajo |
 | TTS 1ª frase — Kokoro `ef_dora` | **196-303 ms** | mejor de lo que se creyó (461 ms) |
-| TTS 1ª frase — ElevenLabs Flash | **354 ms** | más rápido que el local, con red |
+| TTS 1ª frase — ElevenLabs Flash | **354 ms** | ganaba al local cuando Kokoro se creía en 461 ms; remedido, el local vuelve a ser el más rápido |
 | **Hasta el primer audio, con reranker** | **≈ 2.1 s** | medido con el LLM simulado a 400 ms; con el real son ~60 ms más |
 | **Hasta el primer audio, sin reranker** | **≈ 1.5 s** | ídem |
 
@@ -193,7 +194,13 @@ recuperar el protocolo equivocado es peor que responder despacio.
 
 Palancas si hay que bajar la latencia, en orden de coste:
 
-1. Apagar el reranker (`RERANK_ENABLED=false`) → **−585 ms**, la palanca grande
+1. ~~Apagar el reranker (`RERANK_ENABLED=false`)~~ → serían −585 ms, la palanca
+   grande, pero **hoy no se puede tirar de ella**: las dos ramas de `reordenar()`
+   puntúan en escalas distintas y ambas se comparan contra el mismo umbral, así
+   que apagarlo deja `hay_evidencia` en `False` para todo y el agente responde «no
+   tengo esa información» con el protocolo delante. El fallo está aislado y es
+   pequeño (`docs/REVISION_F2_F3.md` §1.12, con un `xfail(strict=True)` que
+   avisará cuando se arregle); arreglarlo es lo que desbloquea esta palanca
 2. ~~Cambiar a Groq~~ → **−91 ms medidos**, no los −200-400 ms que se estimaron.
    Ya no es una palanca de latencia; es el plan B de disponibilidad
 3. Rerankear menos candidatos (`RETRIEVE_TOP_K=5`) → ≈ −40 % del coste del reranker
@@ -225,9 +232,15 @@ aparezcan errores nuevos en transcripciones reales.
 
 | Motor | 1ª frase | Frase completa |
 |---|---:|---:|
-| **Kokoro** `ef_dora` | **461 ms** | 987 ms |
+| **Kokoro** `ef_dora` | **196-303 ms** | 987 ms |
 | macOS `say` Mónica | 512 ms | 530 ms |
 | Piper `es_ES-davefx` | 594 ms | 725 ms |
+
+La primera fila se midió dos veces: el spike de la Fase 0 dio 461 ms para Kokoro y
+esa cifra estuvo un tiempo en esta tabla; remedido contra el pipeline real son
+196-303 ms. Importa porque el número viejo era el que sostenía la conclusión
+contraria: con 461 ms, ElevenLabs (354 ms) hacía que premium *ahorrase* latencia.
+Con el número bueno vuelve a costarla, y lo que premium compra es solo voz.
 
 Los tres caben en el presupuesto, así que la latencia no decide entre ellos.
 Ninguno alcanza la naturalidad de un motor de nube, y de ahí salen los dos modos.
@@ -243,11 +256,13 @@ for f in scripts/spikes/out/*completa*.wav; do echo "$f"; afplay "$f"; done
 | `local` | Kokoro-82M | gratis, ilimitado | no necesita | desarrollo y operación por defecto |
 | `premium` | ElevenLabs Flash | por carácter | obligatoria | pruebas finales y demo |
 
-El modo activo **no vive en `.env`**: vive en la tabla `app_settings` y se
-conmuta desde la consola de administración. Eso permite cambiarlo en caliente,
-incluso a mitad de una llamada, y hace del coste una palanca operativa en vez de
-una decisión de despliegue — un hospital puede operar en local por cumplimiento
-o presupuesto y subir a premium cuando lo justifique.
+El modo activo **no vive en `.env`**: vive en la tabla `app_settings` y se conmuta
+por `PUT /api/settings/voice-mode`. Eso permite cambiarlo en caliente, incluso a
+mitad de una llamada, y hace del coste una palanca operativa en vez de una decisión
+de despliegue — un hospital puede operar en local por cumplimiento o presupuesto y
+subir a premium cuando lo justifique. **Sin botón en la consola todavía**: el
+alcance de la Fase 2 se cerró en la gestión de documentos, así que hoy el toggle se
+demuestra con `curl`.
 
 Tres consecuencias de diseño:
 
@@ -256,9 +271,9 @@ Tres consecuencias de diseño:
   paciente en silencio. En una demo en vivo eso convierte un fallo en un detalle
   que nadie nota.
 - **Contabilidad.** Cada síntesis se anota en `tts_usage` con modo, caracteres,
-  latencia y segundos de audio. Sin esto el toggle sería un interruptor a
-  ciegas; con esto la consola muestra qué está costando premium y qué latencia
-  se obtiene a cambio.
+  latencia y segundos de audio, y `voice_mode.resumen_consumo()` lo agrega por
+  modo. Sin esto el toggle sería un interruptor a ciegas. El panel que lo enseñe
+  está pendiente, igual que el botón: hoy el dato se consulta con `psql`.
 - **El desarrollo no toca el free tier.** Son ~10.000 caracteres al mes; una
   tarde iterando sobre el guion se los come. Por eso el modo por defecto es
   local y premium se reserva para las pruebas finales.
@@ -328,13 +343,13 @@ instalación local en el 5432.
 backend/app/
   api/        routers FastAPI: documentos, llamadas, SSE de estado
   rag/        ingest · chunking · embeddings · retrieval · rerank
-  voice/      pipeline Pipecat · stt · tts · vad
-  agent/      prompts · tools · banderas rojas · llm_client
+  voice/      vad · stt · tts · los DOS pipelines (ws y pipecat)
+  agent/      prompts · guion · tools · banderas rojas · llm_client
   db/         schema.sql · pool · cola de jobs
   core/       config
-frontend/     React: /call y /admin
-scripts/spikes/  mediciones de la Fase 0 (reproducibles)
-eval/         golden set y evaluación del RAG
+frontend/     React: /call, /calls y /admin
+scripts/spikes/  las mediciones que sostienen las decisiones de aquí (reproducibles)
+eval/         corpus de prueba, guion de llamada y evaluación del RAG
 ```
 
 ## Estado
@@ -342,18 +357,24 @@ eval/         golden set y evaluación del RAG
 - [x] **Fase 0** — infraestructura, schema verificado, presupuesto de latencia medido
 - [x] **Fase 1** — pipeline RAG completo sin voz: parsing, cola, worker, retrieval híbrido
 - [x] **Fase 2** — consola de administración: API con SSE + panel de documentos en React
-- [ ] **Fase 3** — loop de voz *(las dos opciones construidas; falta elegir por medición)*
+- [x] **Fase 3** — loop de voz *(las dos opciones construidas y medidas; gana Pipecat,
+  pero lo montado y accesible hoy es el WebSocket propio, que es el que tiene cliente
+  de navegador. Falta probarlo con un micrófono de verdad)*
 - [x] **Fase 4** — agente de seguimiento y banderas rojas *(guion adaptativo, seis
   herramientas, detector determinista y grounding; el guion clínico está en
   [eval/guion_llamada.md](eval/guion_llamada.md) pendiente de revisión de Samuel)*
-- [ ] **Fase 5** — web app de llamada
+- [x] **Fase 5** — web app de llamada: `/call`, `/calls` y `/calls/:id`, cosida al
+  bucle de voz y al agente
 - [ ] **Fase 6** — evals, tuning y guion de demo
 
 La garantía central se demuestra sin micrófono en un solo comando:
 
 ```bash
-uv run python scripts/demo_aprender_olvidar.py
+cd backend && uv run python ../scripts/demo_aprender_olvidar.py
 ```
+
+Desde `backend/`, que es donde vive el `pyproject.toml`: lanzado desde la raíz,
+`uv run` monta un entorno efímero sin `httpx` y el script muere en el import.
 
 Sube un protocolo, espera a que el agente lo aprenda, le pregunta algo que solo
 ese documento responde, lo borra y vuelve a preguntar. Medido: **2,6 s** de la

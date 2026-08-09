@@ -147,7 +147,7 @@ El token va por query string (`?token=…`): `EventSource` no admite cabeceras.
       "page":3, "contenido":"…", "score":0.87, "cita":"protocolo.pdf › Cuidado de la herida › p. 3" }
   ],
   "hay_evidencia": true,
-  "ms": { "embedding": 24, "retrieval": 18, "rerank": 114, "total": 156 }
+  "ms": { "embedding": 25, "retrieval": 3, "rerank": 585, "total": 613 }
 }
 ```
 Es la prueba de aprender/olvidar **sin micrófono**: misma consulta antes y

@@ -9,11 +9,11 @@ Se evaluaron las dos. NOTIFY se descartó por dos razones concretas, no por
 comodidad:
 
   1. Nadie emitiría el NOTIFY. Quien cambia `documents.status` es el worker de
-     ingesta, no esta capa. Hacerlo funcionar exige o un trigger en
-     `schema.sql` —fichero de otro agente, y las bases de datos ya están
-     creadas, así que haría falta una migración— o llamadas a `pg_notify()`
-     dentro de `app/rag/ingest.py`, que también es de otro. El sondeo no
-     necesita que nadie coopere.
+     ingesta, no esta capa. Hacerlo funcionar exige o un trigger en `schema.sql`
+     —y las bases de datos ya están creadas, así que haría falta una migración—
+     o sembrar llamadas a `pg_notify()` por dentro de `app/rag/ingest.py`. El
+     sondeo no necesita que nadie coopere: funciona aunque el estado lo cambie
+     un `psql` a mano.
   2. LISTEN inmoviliza una conexión del pool durante toda la vida del flujo, y
      el pool es de 8 (app/db/pool.py, dimensionado así porque los 16 GB se
      comparten con Whisper, bge-m3 y el reranker). Nueve pestañas de la consola

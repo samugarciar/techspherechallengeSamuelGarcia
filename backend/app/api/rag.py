@@ -7,8 +7,15 @@ es más convincente que cualquier explicación, y se puede repetir delante del
 jurado en dos comandos.
 
 El desglose de `ms` por etapa no es decoración: es el presupuesto de latencia del
-README verificándose en vivo. Si el reranker se dispara, se ve aquí y se apaga
-con RERANK_ENABLED sin tocar nada más.
+README verificándose en vivo, y es donde se ve que el reranker cuesta 585 ms.
+
+CUIDADO con la conclusión fácil. Este comentario decía que apagar el reranker con
+`RERANK_ENABLED` era gratis, «sin tocar nada más». Es falso y era la peor clase de
+consejo: las dos ramas de `reordenar()` devuelven escalas distintas y ambas se
+comparan contra el mismo umbral, así que hoy apagarlo deja `hay_evidencia` en
+`False` para todo y el agente contesta «no tengo esa información» con el protocolo
+delante. Está documentado en `docs/REVISION_F2_F3.md` §1.12 y vigilado por el
+`xfail(strict=True)` de `tests/test_api_rag.py`.
 """
 
 from __future__ import annotations
@@ -57,7 +64,7 @@ async def consultar(cuerpo: Consulta) -> dict[str, Any]:
     t2 = perf_counter()
     reordenados = await reordenar(cuerpo.consulta, candidatos, top_k)
     t3 = perf_counter()
-    # Última etapa, y no es opcional: durante los ~120 ms del cross-encoder el
+    # Última etapa, y no es opcional: durante los ~585 ms del cross-encoder el
     # administrador puede haber borrado el documento, y devolver aquí un fragmento
     # suyo sería citarle a un paciente un protocolo ya retirado. Ver
     # `retrieval.revalidar()` para por qué el ON DELETE CASCADE no basta.

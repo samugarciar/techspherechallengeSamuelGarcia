@@ -1,6 +1,9 @@
 """Demuestra el requisito central del enunciado contra la API real, sin micrófono.
 
-    python scripts/demo_aprender_olvidar.py
+    cd backend && uv run python ../scripts/demo_aprender_olvidar.py
+
+Desde `backend/`: el `pyproject.toml` está allí, y lanzarlo desde la raíz deja a
+`uv` montando un entorno efímero sin `httpx`.
 
 Sube un protocolo, espera a que el agente lo aprenda, le pregunta algo que solo
 ese documento puede responder, lo borra, y vuelve a preguntar lo mismo. Si el

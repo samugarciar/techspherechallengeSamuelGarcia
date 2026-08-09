@@ -164,7 +164,7 @@ async def revalidar(fragmentos: list[Fragmento]) -> list[Fragmento]:
     retirar.
 
     El agujero no está en el schema, está en el tiempo. Entre que `buscar()` lee y
-    que la respuesta sale pasan ~120 ms del cross-encoder, y en esa ventana el
+    que la respuesta sale pasan ~585 ms del cross-encoder, y en esa ventana el
     administrador puede borrar el documento. Ninguna de las dos garantías del
     schema lo tapa: el CASCADE borra las filas de verdad, pero la sentencia que ya
     las leyó trabajaba sobre su propia instantánea —READ COMMITTED: cada sentencia
@@ -179,7 +179,7 @@ async def revalidar(fragmentos: list[Fragmento]) -> list[Fragmento]:
 
     Lo que esto garantiza es acotado y hay que decirlo con precisión: que ningún
     fragmento devuelto estaba borrado en el momento de esta comprobación. La
-    ventana no desaparece —es imposible—, pasa de ~120 ms a la latencia de una
+    ventana no desaparece —es imposible—, pasa de ~585 ms a la latencia de una
     consulta por clave primaria, que es el mínimo teórico.
     """
     if not fragmentos:
@@ -200,8 +200,13 @@ async def revalidar(fragmentos: list[Fragmento]) -> list[Fragmento]:
 
 
 async def solo_denso(query_vector: np.ndarray, top_k: int = 10) -> list[Fragmento]:
-    """Búsqueda puramente vectorial. Existe para comparar contra la híbrida en
-    los evals de la Fase 6 — sirve para justificar el híbrido con números."""
+    """Búsqueda puramente vectorial. **No la llama nadie todavía.**
+
+    Existe para comparar contra la híbrida en los evals de la Fase 6: el argumento
+    de que el híbrido hace falta —«el léxico acierta *cefalexina 500 mg*, el denso
+    acierta *¿me puedo bañar?*»— es hoy una afirmación razonable y sin medir, y
+    esta función es la mitad que falta para convertirla en un número.
+    """
     async with connection() as conn:
         cur = await conn.execute(
             """

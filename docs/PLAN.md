@@ -7,7 +7,7 @@ puntos**, y esas correcciones mandan sobre lo que dice más abajo:
 | El plan decía | La medición dijo | Dónde vive ahora |
 |---|---|---|
 | STT Whisper `large-v3-turbo` | `small` + sesgo de vocabulario clínico da la misma precisión en 481 ms frente a 1257 ms. El compromiso «rápido o preciso» resultó falso | `STT_MODEL` en `.env`; el vocabulario en `app/voice/stt.py` |
-| Reranker top-20 → top-4 | Top-20 cuesta 260 ms y no cabe en el presupuesto de voz; top-8 cuesta 114 ms y separa igual de nítido (0.993 vs 0.004) | `RETRIEVE_TOP_K=8` |
+| Reranker top-20 → top-4 | Top-8 separa igual de nítido que top-20 (0.993 vs 0.004), así que se recorta a 8. **El coste que dijo esta medición era falso**: 114 ms medidos con pasajes de 250 caracteres, 585 ms con los reales de 500-1400. Ver README §«El reranker costaba cinco veces lo presupuestado» | `RETRIEVE_TOP_K=8` |
 | Observabilidad con Langfuse self-hosted | v3 arrastra ClickHouse + Redis + MinIO. La máquina tiene 16 GB compartidos con Whisper, bge-m3 y el reranker. Se sustituye por una tabla `traces` | `traces` en `schema.sql` |
 
 Y dos decisiones posteriores de Samuel que el plan no contemplaba:
@@ -19,10 +19,12 @@ Y dos decisiones posteriores de Samuel que el plan no contemplaba:
   Ver `docs/VOZ_COMPARATIVA.md`.
 
 Hallazgo del smoke test del 8 de agosto: ElevenLabs Flash responde en **354 ms**
-de mediana, *menos* que Kokoro en local (461 ms). Premium no es «mejor voz a
-cambio de latencia», sino mejor voz y menos latencia a cambio de dinero y de
-depender de la red. Además, el free tier **no permite voces de biblioteca por
-API** (402 `paid_plan_required`): solo las *premade*.
+de mediana, *menos* que los 461 ms que el spike de la Fase 0 atribuía a Kokoro. De
+ahí salió la conclusión de que premium no costaba latencia sino que la ahorraba —
+y **duró un día**: remedido contra el pipeline real, Kokoro tarda 196-303 ms, así
+que el local vuelve a ser el más rápido y lo que premium compra es solo voz, a
+cambio de dinero y de depender de la red. Además, el free tier **no permite voces
+de biblioteca por API** (402 `paid_plan_required`): solo las *premade*.
 
 ---
 

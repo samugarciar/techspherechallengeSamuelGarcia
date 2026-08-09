@@ -1,8 +1,8 @@
 /**
  * Tipos derivados de `docs/CONTRATO_API.md`.
  *
- * El contrato es normativo y el backend se está escribiendo en paralelo, así que
- * este fichero es la traducción literal del documento, no una interpretación:
+ * El contrato es normativo, así que este fichero es la traducción literal del
+ * documento y no una interpretación:
  * los nombres de campo se dejan en inglés donde el contrato los define en inglés
  * (`status`, `chunks_count`) y en español donde el contrato los define en español
  * (`olvidado`, `fragmentos`, `hay_evidencia`). Mezclar idiomas dentro de un mismo

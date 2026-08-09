@@ -9,10 +9,6 @@ export function Campo({ className, ...props }: ComponentProps<'input'>) {
   return <input className={cn(base, 'h-9', className)} {...props} />
 }
 
-export function AreaTexto({ className, ...props }: ComponentProps<'textarea'>) {
-  return <textarea className={cn(base, 'min-h-20 py-2 leading-relaxed', className)} {...props} />
-}
-
 export function Etiqueta({ className, ...props }: ComponentProps<'label'>) {
   return (
     <label

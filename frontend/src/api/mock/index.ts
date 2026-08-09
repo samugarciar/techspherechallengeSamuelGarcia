@@ -7,8 +7,8 @@ import type { DocumentoConTrozos } from '@/types/api'
  *
  * Lo único que esta capa añade sobre `servidor.ts` es la ilusión de red: el
  * progreso de subida byte a byte y una reconexión SSE con la misma forma que la
- * real, para que el camino que se prueba esta noche sea el mismo que correrá
- * mañana contra FastAPI.
+ * real, para que el camino que se ejercita en modo simulado sea el mismo que
+ * corre contra FastAPI.
  */
 
 /** Corta el flujo simulado. La consola expone un botón con esto en modo simulado

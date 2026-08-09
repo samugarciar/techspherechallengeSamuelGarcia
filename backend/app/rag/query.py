@@ -14,7 +14,7 @@ que el servidor esté levantado ni del token, así que sirve también cuando lo 
 está roto es la API.
 
 ── La última etapa: revalidar ───────────────────────────────────────────────
-Entre que se recuperan los candidatos y se devuelve la respuesta pasan ~120 ms
+Entre que se recuperan los candidatos y se devuelve la respuesta pasan ~585 ms
 (el cross-encoder). En esa ventana el administrador puede haber borrado el
 documento, y sin una comprobación final la respuesta llevaría fragmentos de un
 protocolo que el hospital acaba de retirar. Ninguna de las dos garantías del

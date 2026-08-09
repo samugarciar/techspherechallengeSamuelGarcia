@@ -1,6 +1,6 @@
 """Una llamada de seguimiento entera, de punta a punta y sin micrófono.
 
-    python scripts/demo_llamada_completa.py
+    cd backend && uv run python ../scripts/demo_llamada_completa.py
 
 Es el hermano de `demo_aprender_olvidar.py`: guion de demo y prueba de regresión
 a la vez. Aquel demuestra el requisito del enunciado —subir = aprender, borrar =
@@ -115,6 +115,17 @@ GUION = (
 )
 
 
+def cita_en_una_linea(cita: dict) -> str:
+    """«protocolo.pdf › Cuidado de la herida · p. 3».
+
+    Mismo formato en el paso 3 (lo que llega por el WebSocket) y en el paso 4 (lo
+    que quedó escrito en `call_turns`), porque una de las seis comprobaciones es
+    justamente que sean lo mismo: si se imprimen distinto, la vista compara mal.
+    """
+    pagina = f" · p. {cita['page']}" if cita.get("page") else ""
+    return f"{cita['filename']} › {cita['heading']}{pagina}"
+
+
 # ---------------------------------------------------------------------------
 # Audio
 # ---------------------------------------------------------------------------
@@ -191,8 +202,7 @@ class Escucha:
                 nuevas = [c for c in mensaje["citas"] if c not in self.citas]
                 self.citas.extend(nuevas)
                 for c in nuevas:
-                    pagina = f" · p. {c['page']}" if c.get("page") else ""
-                    print(f"         cita │ {c['filename']} › {c['heading']}{pagina}")
+                    print(f"         cita │ {cita_en_una_linea(c)}")
             case "bandera_roja":
                 self.bandera = mensaje
                 print(f"\n      ⚑ BANDERA ROJA │ {mensaje['motivo']} "
@@ -478,7 +488,7 @@ async def principal() -> int:
         detalle = c.get(f"{api}/calls/{call_id}").json()
         for turno in detalle.get("turnos", []):
             citas = "".join(
-                f"\n              ↳ {cita['filename']} › {cita['heading']}"
+                f"\n              ↳ {cita_en_una_linea(cita)}"
                 for cita in turno.get("citas") or []
             )
             ms = turno.get("ms") or {}

@@ -148,10 +148,13 @@ class VoiceRouter:
 
 
 async def resumen_consumo() -> list[dict]:
-    """Consumo agregado por modo, para el panel de la consola.
+    """Consumo agregado por modo: caracteres gastados y latencia media obtenida.
 
-    Da al admin lo que necesita para decidir: cuántos caracteres lleva gastados
-    en premium y qué latencia media está obteniendo a cambio.
+    Es la respuesta a la única pregunta que hace útil el toggle de voz —¿qué me
+    está costando premium y qué gano?— y hoy **no la consume nadie**: el panel que
+    la enseñe está pendiente, porque el alcance de la Fase 2 se cerró en la gestión
+    de documentos. Se mantiene escrita porque `tts_usage` ya se está llenando en
+    cada síntesis y sin esta agregación ese dato no se puede leer sin `psql`.
     """
     async with connection() as conn:
         cur = await conn.execute(

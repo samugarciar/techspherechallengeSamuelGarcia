@@ -173,9 +173,11 @@ async def test_hay_evidencia_sigue_significando_algo_sin_reranker():
     perfectamente buenos. El fallo no se ve en ningún test porque todos los que
     tocan grounding sustituyen `reordenar`.
 
-    Y es un interruptor que se va a tocar: `app/api/rag.py` lo anuncia («si el
-    reranker se dispara, se ve aquí y se apaga con RERANK_ENABLED sin tocar nada
-    más») y el reranker está medido en 585 ms, el mayor bloque del camino de voz.
+    Y es un interruptor que se va a tocar: el reranker está medido en 585 ms, el
+    mayor bloque del camino de voz, así que apagarlo es la palanca de latencia más
+    tentadora que queda. Las cabeceras de `app/api/rag.py` y `app/rag/rerank.py`
+    anunciaban que apagarlo salía gratis; ahora avisan de lo contrario y apuntan
+    aquí.
 
     Se prueba con la función real, sin cargar ningún modelo: la rama de
     `rerank_enabled=False` sale antes de tocar el cross-encoder.

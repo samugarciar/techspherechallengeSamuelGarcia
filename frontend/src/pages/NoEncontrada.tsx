@@ -5,8 +5,8 @@ export function NoEncontrada() {
     <div className="py-20 text-center">
       <p className="text-sm font-medium text-tinta">Esa página no existe</p>
       <p className="mx-auto mt-1 max-w-sm text-[0.8125rem] leading-relaxed text-tinta-tenue">
-        La consola cubre por ahora la gestión de documentos. El resto de secciones llegará en las
-        siguientes fases.
+        Las secciones que existen son Documentos, Llamar e Historial, y todas están en la barra de
+        arriba.
       </p>
       <Link
         to="/admin"

@@ -11,7 +11,7 @@ Tres decisiones estructurales
 **1. `SesionVoz` no sabe qué es un WebSocket.** Recibe audio por un método y
 emite por dos callbacks. Eso permite medir el pipeline entero inyectando un WAV,
 sin navegador, sin micrófono y sin red — que es la única forma de que «el
-barge-in tarda 180 ms» sea una medición y no una impresión. El endpoint
+barge-in tarda 96 ms» sea una medición y no una impresión. El endpoint
 WebSocket de abajo son 30 líneas encima de eso.
 
 **2. El corte del barge-in es doble: servidor y cliente.** Cortar la síntesis en
@@ -99,9 +99,11 @@ daría falsos positivos."""
 class ClienteLLMFalso(LLMClient):
     """Implementa `LLMClient` con una respuesta fija tras un retardo configurable.
 
-    GEMINI_API_KEY está vacía y el pipeline no puede quedarse sin medir por eso.
-    Además aísla lo que interesa: la latencia del *pipeline*, no la de la red de
-    Google, que varía entre ejecuciones y haría incomparables las dos opciones.
+    Nació porque no había GEMINI_API_KEY y el pipeline no podía quedarse sin medir
+    por eso. Se queda por el motivo que sigue vigente: aísla lo que interesa —la
+    latencia del *pipeline*, no la de la red de Google, que varía entre ejecuciones
+    y haría incomparables las dos opciones—. Con el LLM real, Pipecat contra
+    WebSocket propio dejaría de ser una comparación.
 
     El intercambio por el real es una línea — `crear_cliente()` en vez de
     `ClienteLLMFalso()` — porque las dos implementan la misma interfaz.
@@ -110,8 +112,11 @@ class ClienteLLMFalso(LLMClient):
     importa Pipecat: así el cliente falso es compartible por las dos opciones sin
     que la Opción B arrastre Pipecat solo para tener un LLM de mentira.
 
-    `ttft_ms=400` es el centro del rango que el README estima para Gemini 2.5
-    Flash (300-600 ms).
+    `ttft_ms=400` era el centro del rango que se estimaba para Gemini 2.5 Flash
+    (300-600 ms); medido después con el prompt real son 462 ms. NO se ha subido a
+    462: los números de `docs/VOZ_COMPARATIVA.md` se tomaron con 400, y cambiar la
+    constante los haría irreproducibles sin volver a lanzar el arnés entero. Es una
+    referencia fija compartida por las dos opciones, no una predicción.
     """
 
     RESPUESTA = (
@@ -874,9 +879,9 @@ def crear_router(
     """Devuelve un `APIRouter` con `/ws/voz`.
 
     El router se construye en una función y no a nivel de módulo para poder
-    inyectarle dobles en las pruebas. `app/main.py` es de otro agente: la
-    anotación para que lo monte está en `docs/CONTRATO_API.md` §Cambios sobre el
-    contrato.
+    inyectarle dobles en las pruebas. Lo monta `app/main.py` detrás de `VOZ=1`,
+    porque construirlo carga Silero, Whisper y el motor de TTS y la consola de
+    administración no necesita nada de eso.
 
     ── `llm` contra `fabrica_llamada` ──────────────────────────────────────
     Son los dos modos del endpoint y la diferencia es el estado por llamada:

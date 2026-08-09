@@ -21,8 +21,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://postop:postop@localhost:5433/postop"
 
     # --- LLM -----------------------------------------------------------------
-    # Cambiar este campo conmuta el agente entero. Es el punto de escape si la
-    # latencia de Gemini estorba en la demo (ver README §Presupuesto de latencia).
+    # Cambiar este campo conmuta el agente entero. Es el plan B para cuando Gemini
+    # no esté disponible, NO una palanca de latencia: medido, Groq gana 91 ms de
+    # TTFT y su free tier da timeouts con tool calling (22,5 s de mediana en el
+    # turno completo frente a 1,2 s). Ver README §Presupuesto de latencia.
     llm_provider: Literal["gemini", "groq"] = "gemini"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"

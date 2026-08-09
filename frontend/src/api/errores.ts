@@ -70,21 +70,6 @@ export function errorDeRed(causa: unknown): ErrorApi {
   )
 }
 
-/** ¿Merece la pena ofrecer «reintentar»? */
-export function esRecuperable(error: unknown): boolean {
-  if (!(error instanceof ErrorApi)) return true
-  return (
-    error.codigo === SIN_CONEXION ||
-    error.codigo === TIEMPO_AGOTADO ||
-    error.estadoHttp >= 500 ||
-    error.estadoHttp === 0
-  )
-}
-
-export function esFaltaDeToken(error: unknown): boolean {
-  return error instanceof ErrorApi && (error.codigo === 'no_autorizado' || error.estadoHttp === 401)
-}
-
 /** Texto que se pinta. Nunca devuelve vacío. */
 export function mensajeDeError(error: unknown): string {
   if (error instanceof ErrorApi) return error.message

@@ -6,35 +6,20 @@ que el spike ya mide con audio inyectado (`scripts/spikes/spike_voz.py`).
 
 ## Arranque
 
-**1. Montar el router del WebSocket.** Aún no está en `app/main.py` (ese fichero
-es de otro agente; está anotado en `docs/CONTRATO_API.md` §Cambios sobre el
-contrato, punto 5). Dos líneas:
-
-```python
-from app.voice.pipeline_ws import crear_router
-app.include_router(crear_router())
-```
-
-**2. Levantar el backend.**
+**1. Levantar el backend con voz.** `app/main.py` monta `/ws/voz`, pero solo con
+`VOZ=1`: construir el router carga Silero, Whisper y el motor de TTS, y la consola
+de administración no necesita nada de eso.
 
 ```bash
-cd backend && uv run uvicorn app.main:app --reload --port 8000
+cd backend && VOZ=1 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-Si `app/main.py` todavía no existe o no monta el router, se puede levantar solo
-el bucle de voz sin tocar nada de nadie:
+Sin `?call_id=…` en la URL del WebSocket —que es el caso de esta página— la sesión
+no busca ningún agente clínico y cae a `ClienteLLMFalso`: es la «sesión suelta sin
+persistir» del contrato. Se contesta una frase fija, que es justo lo que hace falta
+para juzgar el VAD, el barge-in y el TTS sin gastar llamadas al LLM.
 
-```bash
-cd backend && uv run python -c "
-from fastapi import FastAPI
-from app.voice.pipeline_ws import crear_router
-import uvicorn
-app = FastAPI(); app.include_router(crear_router())
-uvicorn.run(app, host='127.0.0.1', port=8000)
-"
-```
-
-**3. Abrir la página.** El micrófono exige un origen seguro, y `localhost`
+**2. Abrir la página.** El micrófono exige un origen seguro, y `localhost`
 cuenta como tal — pero `file://` no siempre. Lo fiable:
 
 ```bash
@@ -42,7 +27,7 @@ cd scripts/spikes/cliente_voz && python3 -m http.server 5500
 # luego: http://localhost:5500
 ```
 
-**4. En la página**: `Conectar` → `Hablar`. Habla, calla medio segundo y espera.
+**3. En la página**: `Conectar` → `Hablar`. Habla, calla medio segundo y espera.
 
 ## Qué comprobar, en este orden
 
@@ -61,16 +46,15 @@ auriculares para la demo — y anotarlo.
 
 ## Modo de voz
 
-El TTS local por defecto (`TTS_ENGINE_LOCAL=kokoro`) **no está instalado**: el
-paquete `kokoro` no figura en `backend/pyproject.toml`. Hasta que se añada, para
-probar con voz hay dos caminos:
+El TTS local por defecto es Kokoro y **ya es dependencia del proyecto** (durante un
+tiempo no lo fue: la Fase 0 lo midió con `uv run --with kokoro` y el paquete nunca
+llegó a `pyproject.toml`, así que el modo por defecto no arrancaba). Con `uv sync`
+funciona sin más.
+
+Para iterar rápido sin esperar a que cargue Kokoro, el motor del sistema sirve:
 
 ```bash
-# a) motor del sistema, cero instalación
-TTS_ENGINE_LOCAL=say uv run uvicorn ...
-
-# b) Kokoro en un entorno superpuesto, sin tocar pyproject.toml
-uv run --with kokoro uvicorn ...
+cd backend && VOZ=1 TTS_ENGINE_LOCAL=say uv run uvicorn app.main:app --port 8000
 ```
 
 No se usa ElevenLabs para estas pruebas: cobra por carácter y quedan ~9.500

@@ -1,8 +1,9 @@
 """Endpoints de llamadas: pacientes pendientes, inicio, historial y transcripción.
 
-Implementa `docs/CONTRATO_LLAMADAS.md`. La pantalla `/call` y la `/calls` las
-construye otro agente contra este contrato, así que la forma de la respuesta es
-lo único que no se puede improvisar aquí.
+Implementa `docs/CONTRATO_LLAMADAS.md`. Las pantallas `/call` y `/calls` se
+construyeron en paralelo contra ese mismo documento y sin hablar con este código,
+así que la forma de la respuesta es lo único que no se puede improvisar aquí:
+cualquier desviación se anota en §Cambios sobre el contrato o el frontend adivina.
 
 ── Dos endpoints que el contrato no pedía ──────────────────────────────────
 Están anotados en `docs/CONTRATO_LLAMADAS.md` §Cambios:

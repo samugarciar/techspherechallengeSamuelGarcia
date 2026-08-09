@@ -25,8 +25,11 @@ Uso::
     cd backend && uv run python ../scripts/spikes/spike_voz.py todo
     cd backend && uv run --with kokoro python ../scripts/spikes/spike_voz.py todo --tts kokoro
 
-El motor por defecto es `say` (macOS) porque `kokoro` NO está declarado en
-`backend/pyproject.toml` y no se puede instalar sin tocarlo — ver el informe.
+El motor por defecto es `say` (macOS) y así se queda: es instantáneo, no carga un
+modelo y así el barrido mide el *pipeline*, no el arranque del TTS. Los números de
+`docs/VOZ_COMPARATIVA.md` se tomaron con `say`, y cambiar el motor por defecto los
+haría irreproducibles. Kokoro ya es dependencia del proyecto —lo fue después de
+esta medición—, así que `--tts kokoro` funciona sin `--with`.
 """
 
 from __future__ import annotations

@@ -6,11 +6,16 @@ El free tier de ElevenLabs son ~10.000 caracteres al mes — una tarde de iterar
 sobre el guion se lo come, así que atarse a él durante el desarrollo sería un
 error de logística, no de arquitectura.
 
-El cambio es `TTS_ENGINE` en .env. Nada más del sistema se entera.
+Qué motor implementa cada modo se declara en `.env` (`TTS_ENGINE_LOCAL` /
+`TTS_ENGINE_PREMIUM`); cuál de los dos modos está activo NO vive aquí ni en `.env`,
+sino en la tabla `app_settings`, para poder conmutarlo a mitad de llamada. Ese
+reparto lo resuelve `app/voice/voice_mode.py`; a este módulo nadie le pregunta qué
+modo hay.
 
 Los motores locales siguen siendo la red de seguridad: si la red del venue falla
-durante la demo, se vuelve a Kokoro con una variable de entorno. Y sostienen el
-argumento de que el sistema puede correr 100% on-prem si un hospital lo exige.
+durante la demo, `VoiceRouter` degrada a local él solo, sin que nadie toque nada. Y
+sostienen el argumento de que el sistema puede correr 100% on-prem si un hospital
+lo exige.
 
 TODAS las salidas se normalizan a PCM float32 mono a 24 kHz, para que el
 pipeline de voz no tenga que saber qué motor está detrás.
@@ -24,7 +29,6 @@ import subprocess
 import tempfile
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -85,7 +89,7 @@ def dividir_en_frases(texto: str, minimo: int = 12) -> list[str]:
     """Trocea la respuesta del LLM en frases sintetizables.
 
     Es la optimización de latencia más importante del pipeline: sintetizar la
-    primera frase (461 ms con Kokoro) y empezar a reproducirla mientras el LLM
+    primera frase (196-303 ms con Kokoro) y empezar a reproducirla mientras el LLM
     todavía está escribiendo el resto, en vez de esperar al párrafo completo
     (987 ms). Duplica la sensación de rapidez sin tocar ningún modelo.
     """
@@ -123,16 +127,6 @@ class TTSEngine(ABC):
     @abstractmethod
     async def sintetizar(self, texto: str) -> Audio: ...
 
-    async def stream_por_frases(self, texto: str) -> AsyncIterator[Audio]:
-        """Emite audio frase a frase, en orden.
-
-        Implementación por defecto: secuencial. Sintetizar en paralelo y
-        reordenar daría peor resultado — el primer trozo es el único que el
-        paciente está esperando, y adelantar el tercero no sirve de nada.
-        """
-        for frase in dividir_en_frases(texto):
-            yield await self.sintetizar(frase)
-
     async def cerrar(self) -> None:
         return None
 
@@ -141,7 +135,13 @@ class TTSEngine(ABC):
 # Locales
 # ---------------------------------------------------------------------------
 class KokoroTTS(TTSEngine):
-    """Kokoro-82M, Apache-2.0. 461 ms a la primera frase en M4."""
+    """Kokoro-82M, Apache-2.0. 196-303 ms a la primera frase en M4.
+
+    El spike de la Fase 0 publicó 461 ms y se quedó en el README un tiempo; medido
+    otra vez contra el pipeline real es bastante más rápido, y eso devuelve al
+    local la ventaja de latencia que el smoke test de ElevenLabs (354 ms) parecía
+    haberle quitado.
+    """
 
     nombre = "kokoro"
 
@@ -340,8 +340,8 @@ def crear_motor(nombre: str) -> TTSEngine:
     """Fábrica por nombre de motor.
 
     Quien decide qué motor toca es `voice_mode.VoiceRouter`, según el modo
-    (local/premium) que el admin tenga activo en la consola. Esta función solo
-    construye lo que le pidan.
+    (local/premium) que esté activo en `app_settings`. Esta función solo construye
+    lo que le pidan.
     """
     s = get_settings()
     match nombre:

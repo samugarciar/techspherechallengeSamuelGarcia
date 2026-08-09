@@ -10,10 +10,12 @@ import type {
 /**
  * La interfaz de llamadas que consume la pantalla.
  *
- * Existe por el mismo motivo que `ClienteApi` en `api/cliente.ts`: el backend de
- * llamadas se escribe en paralelo, así que la pantalla habla con una interfaz y
- * `api/llamadas/index.ts` decide si detrás hay FastAPI o el simulador. Ningún
- * componente importa nunca del simulador directamente.
+ * Existe por el mismo motivo que `ClienteApi` en `api/cliente.ts`: la pantalla
+ * habla con una interfaz y `api/llamadas/index.ts` decide si detrás hay FastAPI o
+ * el simulador. Empezó siendo la forma de construir la pantalla mientras el
+ * backend de llamadas se escribía en paralelo; hoy es lo que permite ensayar la
+ * demo entera sin backend. Ningún componente importa nunca del simulador
+ * directamente.
  */
 
 export interface ManejadoresVoz {

@@ -249,7 +249,7 @@ async def test_el_worker_recorre_la_cola_entera(pool):  # noqa: F811
                 job = await queue.tomar_trabajo(conn, worker="test")
         assert job is not None and job.id == job_id
 
-        await _procesar(job, "test")
+        await _procesar(job)
 
         async with connection() as conn:
             cur = await conn.execute("SELECT status FROM jobs WHERE id = %s", (job_id,))
@@ -277,7 +277,7 @@ async def test_el_worker_marca_failed_lo_que_no_puede_leer(pool):  # noqa: F811
             async with conn.transaction():
                 job = await queue.tomar_trabajo(conn, worker="test")
 
-        await _procesar(job, "test")
+        await _procesar(job)
 
         async with connection() as conn:
             cur = await conn.execute(

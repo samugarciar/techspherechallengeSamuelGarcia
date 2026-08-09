@@ -46,7 +46,7 @@ ESPERA_VACIO_S = 1.0
 BARRIDO_HUERFANOS_S = 30.0
 
 
-async def _procesar(job: queue.Job, worker: str) -> None:
+async def _procesar(job: queue.Job) -> None:
     t0 = time.perf_counter()
     log.info("job %s · documento %s · intento %s", job.id, job.document_id, job.intentos)
 
@@ -101,7 +101,7 @@ async def bucle(parar: asyncio.Event, worker: str) -> None:
                 await asyncio.wait_for(parar.wait(), timeout=ESPERA_VACIO_S)
             continue
 
-        await _procesar(job, worker)
+        await _procesar(job)
 
 
 async def main(concurrencia: int, precalentar: bool) -> None:

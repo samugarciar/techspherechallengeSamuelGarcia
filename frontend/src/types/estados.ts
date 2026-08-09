@@ -79,8 +79,3 @@ export function definicionEstado(estado: EstadoDocumento): DefinicionEstado {
     }
   )
 }
-
-/** ¿El agente puede responder con este documento ahora mismo? */
-export function esRecuperable(estado: EstadoDocumento): boolean {
-  return estado === 'ready'
-}
