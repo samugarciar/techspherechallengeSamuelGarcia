@@ -28,10 +28,20 @@ from app.db.pool import close_pool, open_pool
 
 log = logging.getLogger("api")
 
-# Vite sirve la consola aquí. Se listan los dos nombres porque el navegador
-# manda como Origin exactamente el que se escribió en la barra, y 127.0.0.1 y
-# localhost son orígenes distintos para CORS.
-ORIGENES = ["http://localhost:5173", "http://127.0.0.1:5173"]
+# Vite sirve la consola en el 5173 y el cliente de prueba de voz en el 5500. Se
+# listan los dos nombres de cada uno porque el navegador manda como Origin
+# exactamente el que se escribió en la barra, y 127.0.0.1 y localhost son
+# orígenes distintos para CORS.
+#
+# El 5500 hace falta para algo concreto: cuando /ws/voz falla, un WebSocket no
+# expone el código HTTP del rechazo al JavaScript de la página, así que «no hay
+# backend» y «el backend está arrancado sin VOZ=1» se ven idénticos. El cliente
+# lo distingue preguntando por HTTP a /api/health, y sin este origen esa
+# consulta la bloquearía el navegador y el diagnóstico saldría al revés.
+ORIGENES = [
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:5500", "http://127.0.0.1:5500",
+]
 
 
 def _precarga_activa() -> bool:

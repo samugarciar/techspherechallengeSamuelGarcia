@@ -103,13 +103,48 @@ $("#conectar").onclick = () => {
   ws.binaryType = "arraybuffer";
   let srSalida = 24000;
 
-  ws.onopen = () => { estado("Conectado. Pulsa «Hablar»."); $("#hablar").disabled = false; };
-  ws.onclose = () => { estado("Conexión cerrada."); $("#hablar").disabled = true; };
-  ws.onerror = () => {
-    estado("No se pudo conectar. ¿Está el backend levantado y montado /ws/voz?");
-    log("Si el backend responde pero /ws/voz da 404, falta incluir el router: "
-        + "ver docs/CONTRATO_API.md §Cambios sobre el contrato.", "aviso");
+  let abierto = false;
+
+  ws.onopen = () => {
+    abierto = true;
+    estado("Conectado. Pulsa «Hablar».");
+    $("#hablar").disabled = false;
   };
+
+  // Un WebSocket no expone el código HTTP del rechazo al JavaScript de la
+  // página: `onerror` no trae motivo y `onclose` llega con code 1006 tanto si
+  // no hay servidor como si lo hay y la ruta no existe. Los dos casos se ven
+  // idénticos en pantalla y tienen arreglos distintos, así que se distinguen
+  // preguntando al backend por HTTP, que sí responde con detalle.
+  ws.onclose = () => {
+    $("#hablar").disabled = true;
+    if (abierto) { estado("Conexión cerrada."); return; }
+    estado("No se pudo conectar.");
+    diagnosticar();
+  };
+  ws.onerror = () => { if (!abierto) $("#hablar").disabled = true; };
+
+  async function diagnosticar() {
+    const base = $("#url").value.replace(/^ws/, "http").replace(/\/ws\/voz$/, "");
+    try {
+      const r = await fetch(base + "/api/health");
+      if (r.ok) {
+        log("El backend responde, pero /ws/voz no existe: está arrancado SIN voz. "
+            + "Párralo y vuelve a levantarlo con VOZ=1 — monta también todo lo de la "
+            + "consola, así que un solo servidor sirve para las dos cosas:\n"
+            + "    VOZ=1 TTS_ENGINE_LOCAL=say uv run uvicorn app.main:app --port 8000",
+            "aviso");
+        return;
+      }
+    } catch (_) {
+      log("No hay ningún backend escuchando en " + base + ". Levántalo con:\n"
+          + "    cd backend && VOZ=1 TTS_ENGINE_LOCAL=say uv run uvicorn app.main:app --port 8000",
+          "aviso");
+      return;
+    }
+    log("El backend responde pero rechaza /ws/voz. Revisa que arrancara con VOZ=1.",
+        "aviso");
+  }
 
   ws.onmessage = (ev) => {
     if (typeof ev.data !== "string") {
