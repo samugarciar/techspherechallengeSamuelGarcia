@@ -16,7 +16,7 @@ el agente lo aprende, lo que se borra lo olvida** — de forma verificable.
 
 | Capa | Elección | Por qué |
 |---|---|---|
-| LLM | Gemini 2.5 Flash · Groq Llama de repuesto | Mejor español clínico y tool calling fiable del conjunto permitido; Groq detrás de la misma interfaz si el TTFT estorba |
+| LLM | Gemini 2.5 Flash · Groq Llama de repuesto | Mejor español clínico y tool calling fiable del conjunto permitido; medido, Groq solo gana 91 ms de TTFT y su free tier da timeouts con tool calling, así que queda como plan B de disponibilidad, no de latencia |
 | Orquestación de voz | Pipecat + `SmallWebRTCTransport` | Resuelve barge-in y fin de turno, que es el trabajo difícil; WebRTC P2P sin SFU ni nube |
 | VAD / turnos | Silero VAD | ONNX en CPU, ya integrado en Pipecat |
 | STT | Whisper `small` (MLX) + sesgo de vocabulario | 481 ms con la misma precisión clínica que `medium` a 1222 ms — ver abajo |
@@ -90,11 +90,11 @@ Todo lo local se midió de verdad; el LLM es una estimación hasta tener API key
 | Embedding de la consulta — bge-m3 | **25 ms** | despreciable |
 | Retrieval híbrido — Postgres | **3 ms** | pgvector + FTS + RRF sobre 25 fragmentos |
 | Reranker — bge-reranker-v2-m3, top-8 | **585 ms** | ver abajo: el mayor bloque del pipeline |
-| LLM TTFT — Gemini 2.5 Flash | *~400 ms* | **el único número sin medir**; falta API key |
+| LLM TTFT — Gemini 2.5 Flash | **462 ms** | con el prompt del agente y el razonamiento apagado — ver abajo |
 | TTS 1ª frase — Kokoro `ef_dora` | **196-303 ms** | mejor de lo que se creyó (461 ms) |
 | TTS 1ª frase — ElevenLabs Flash | **354 ms** | más rápido que el local, con red |
-| **Hasta el primer audio, con reranker** | **≈ 2.1 s** | no aceptable para conversar |
-| **Hasta el primer audio, sin reranker** | **≈ 1.5 s** | |
+| **Hasta el primer audio, con reranker** | **≈ 2.1 s** | medido con el LLM simulado a 400 ms; con el real son ~60 ms más |
+| **Hasta el primer audio, sin reranker** | **≈ 1.5 s** | ídem |
 
 Medido en caliente contra la API y el pipeline reales, no en bancos de pruebas
 aparte. Dos correcciones que este presupuesto necesitó, y las dos son
@@ -116,6 +116,50 @@ frase, no 461 ms. Y de paso apareció que `kokoro` no estaba en `pyproject.toml`
 la Fase 0 lo midió con `uv run --with kokoro` y nunca llegó a ser dependencia del
 proyecto, así que el modo de voz **por defecto** llevaba todo el tiempo sin
 arrancar. Corregido.
+
+### El LLM: el último número que faltaba, y la sorpresa que traía dentro
+
+Medido el 9 de agosto contra la API real, con el **prompt de sistema del agente**
+(3.354 caracteres, ~840 tokens) y un historial de cuatro turnos — no con un «di
+hola», que habría dado un número bonito e inútil. Mediana de 5 ejecuciones para
+Gemini y Groq, 4 para la variante con razonamiento, intercaladas para que la
+deriva de la red no favorezca a ninguno.
+
+| Configuración | TTFT | Respuesta completa | Peor caso visto |
+|---|---:|---:|---:|
+| **Gemini 2.5 Flash, `thinking_budget=0`** | **462 ms** | 642 ms | 9.733 ms |
+| Gemini 2.5 Flash, razonamiento por defecto | 956 ms | 956 ms | 1.454 ms |
+| Groq `llama-3.3-70b-versatile` | **371 ms** | 425 ms | 573 ms |
+
+**El razonamiento de Gemini costaba más que el modelo.** Gemini 2.5 Flash trae el
+*thinking* encendido por defecto y con presupuesto dinámico: piensa antes de
+emitir el primer token, y ese rato entra íntegro en el TTFT. Apagarlo
+(`thinking_budget=0`) es un factor **2,1** — 494 ms por turno, unos 7 segundos en
+una llamada de quince turnos. Es la segunda palanca de latencia más grande del
+sistema, por detrás del reranker, y no costó nada encontrarla salvo medirla.
+
+Se apaga porque este agente no razona: sigue un guion, lee datos con herramientas
+y repite lo que dice un protocolo. La decisión difícil —si hay una bandera roja—
+es determinista y ni siquiera pasa por el modelo. La constante que lo controla
+está con nombre en `app/agent/llm_client.py` (`PENSAMIENTO_DESACTIVADO`) por si
+los evals de la Fase 6 muestran que elige mal la herramienta: subirla a 128 es lo
+primero que habría que probar.
+
+**Groq gana el TTFT por 91 ms, y aun así no se cambia.** Era la palanca número 3
+de la lista de abajo, con «−200-400 ms estimados». Medido son **−91 ms**, dentro
+del ruido de una sola ejecución. Y en la prueba del turno completo —dos rondas de
+LLM con *tool calling*, que es lo que de verdad hace el agente— el free tier de
+Groq dio timeouts y reintentos: mediana de **22,5 s** frente a **1,2 s** de
+Gemini. El escape a Groq sigue existiendo y sigue siendo una variable de entorno,
+pero deja de ser la palanca de latencia que se creía: es el plan B para cuando
+Gemini no esté disponible, no para cuando Gemini vaya lento.
+
+**El peor caso importa más que la mediana.** Los 9,7 s de Gemini fueron una sola
+ejecución de cinco, y con el free tier a 10 peticiones por minuto lo más probable
+es que fuera un 429 con reintento. En una demo en vivo eso es un silencio de diez
+segundos, así que el cliente tiene `TIMEOUT_S = 12` y el agente una frase de
+seguridad (`prompts.FRASE_SEGURIDAD`) que escala en vez de callar. No arregla la
+latencia; arregla que se note como una avería.
 
 ### El reranker costaba cinco veces lo presupuestado
 
@@ -150,9 +194,14 @@ recuperar el protocolo equivocado es peor que responder despacio.
 Palancas si hay que bajar la latencia, en orden de coste:
 
 1. Apagar el reranker (`RERANK_ENABLED=false`) → **−585 ms**, la palanca grande
-2. Rerankear menos candidatos (`RETRIEVE_TOP_K=5`) → ≈ −40 % del coste del reranker
-3. Cambiar a Groq (`LLM_PROVIDER=groq`) → −200-400 ms estimados
+2. ~~Cambiar a Groq~~ → **−91 ms medidos**, no los −200-400 ms que se estimaron.
+   Ya no es una palanca de latencia; es el plan B de disponibilidad
+3. Rerankear menos candidatos (`RETRIEVE_TOP_K=5`) → ≈ −40 % del coste del reranker
 4. Bajar a `CONTEXT_TOP_K=2` → menos tokens de entrada, LLM más rápido
+
+La palanca que sí apareció al medir —apagar el razonamiento de Gemini, −494 ms—
+ya está aplicada por defecto, así que no figura en la lista: está dentro del
+462 ms de la tabla.
 
 ### Cómo se eligió el modelo de STT
 
@@ -294,7 +343,9 @@ eval/         golden set y evaluación del RAG
 - [x] **Fase 1** — pipeline RAG completo sin voz: parsing, cola, worker, retrieval híbrido
 - [x] **Fase 2** — consola de administración: API con SSE + panel de documentos en React
 - [ ] **Fase 3** — loop de voz *(las dos opciones construidas; falta elegir por medición)*
-- [ ] **Fase 4** — agente de seguimiento y banderas rojas *(bloqueado: falta API key)*
+- [x] **Fase 4** — agente de seguimiento y banderas rojas *(guion adaptativo, seis
+  herramientas, detector determinista y grounding; el guion clínico está en
+  [eval/guion_llamada.md](eval/guion_llamada.md) pendiente de revisión de Samuel)*
 - [ ] **Fase 5** — web app de llamada
 - [ ] **Fase 6** — evals, tuning y guion de demo
 

@@ -124,7 +124,17 @@ export function abrirVozReal(llamada: LlamadaCreada, manejadores: ManejadoresVoz
       // `SharedArrayBuffer`, y `send()` no lo acepta. La aserción es segura
       // porque este PCM sale del AudioWorklet, que nunca produce memoria
       // compartida.
-      ws.send(pcm.buffer as ArrayBuffer)
+      //
+      // El `slice` sólo entra si la vista NO cubre su buffer entero. Hoy nunca
+      // pasa —`captura.ts` crea un Int16Array nuevo por bloque— pero mandar
+      // `.buffer` a secas de una subvista enviaría audio de más sin avisar, y
+      // eso se depura fatal: llega ruido al VAD y todo lo demás parece roto.
+      const cubreElBuffer = pcm.byteOffset === 0 && pcm.byteLength === pcm.buffer.byteLength
+      ws.send(
+        cubreElBuffer
+          ? (pcm.buffer as ArrayBuffer)
+          : (pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength) as ArrayBuffer),
+      )
     },
     abierta() {
       return ws.readyState === WebSocket.OPEN

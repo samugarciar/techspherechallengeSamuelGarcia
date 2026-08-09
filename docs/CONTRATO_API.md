@@ -267,3 +267,62 @@ Mensajes de control que manda el servidor por `/ws/voz` (el cliente de prueba en
 `parar` es obligatorio de implementar: sin vaciar el buffer del cliente, el
 agente sigue sonando lo que le quede encolado (medido: 5,4 s) y el corte del
 servidor no se oye.
+
+### Revisión de las Fases 2 y 3 — cierra ambigüedades que ya estaban implementadas
+
+Nada de esto cambia el comportamiento del backend: son huecos del contrato que
+el código ya había rellenado de una manera concreta y que conviene fijar por
+escrito, porque el frontend estaba adivinando. Detalle en `docs/REVISION_F2_F3.md`.
+
+**1. `GET /api/documents/{id}` — el campo de texto de `chunks_preview` se llama
+`contenido`.** El contrato prometía «los 3 primeros trozos con `heading` y los
+200 primeros caracteres» sin nombrar el campo, así que el frontend aceptaba
+cuatro nombres a la vez (`content`, `contenido`, `texto`, `text`) y su mock
+mandaba `content`. Forma real:
+
+```json
+{ "chunks_preview": [ { "ordinal": 0, "heading": "Cuidado de la herida",
+                        "page": 3, "contenido": "…200 caracteres…" } ] }
+```
+
+Español, como `contenido` en `/api/rag/query`. El normalizador del frontend se
+deja como está: acepta el nombre bueno y degrada en vez de romper.
+
+**2. `GET /api/documents/stream` — el evento `documento` incluye `pages` y `error`.**
+El contrato solo enseñaba `id`, `status`, `chunks_count` y `embedded_count`.
+`error` ya se mandaba; `pages` faltaba y era un fallo real: la consola pinta una
+columna «Páginas» que se quedaba vacía para todo lo ingerido en vivo hasta que
+alguien recargara. Forma real:
+
+```
+event: documento
+data: {"id":"…","status":"ready","chunks_count":24,"embedded_count":24,"pages":6,"error":null}
+```
+
+Los demás campos del `Documento` (`filename`, `title`, `size_bytes`, `sha256`,
+`mime_type`) **no** viajan por el flujo: se fijan en el 202 de la subida y la
+consola ya los tiene. Un evento de un documento desconocido es la señal de
+recargar la lista, no de pintar una fila a medias.
+
+**3. Tres códigos de error más de los siete publicados.** Los genera el
+framework, no nuestro código, y salen con la forma del contrato:
+
+| código | cuándo | HTTP |
+|---|---|---|
+| `no_encontrado` | la ruta no existe (≠ `documento_no_encontrado`) | 404 |
+| `metodo_no_permitido` | método equivocado sobre una ruta que sí existe | 405 |
+| `peticion_invalida` | validación de Pydantic: cuerpo, query o path mal formados | 422 |
+
+**4. `GET /api/health` devuelve un cuarto campo, `modelos_listos`.** No estaba en
+el contrato y el frontend ni lo declaraba. Distingue «backend caído» de «backend
+arrancando», que en pantalla se parecen mucho: la primera consulta al RAG en frío
+tarda **13,3 s medidos** mientras bge-m3 se carga.
+
+```json
+{ "ok": true, "db": true, "version": "0.1.0", "modelos_listos": false }
+```
+
+**5. `total` en `GET /api/documents` cuenta lo que casa con el filtro, no lo que
+trae la página** — incluido cuando el `offset` se pasa del final y la página
+viene vacía. Estaba implementado con `count(*) OVER ()`, que viaja dentro de las
+filas y por tanto devolvía `0` sin filas.

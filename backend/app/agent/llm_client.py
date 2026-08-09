@@ -63,9 +63,9 @@ PENSAMIENTO_DESACTIVADO = 0
 Gemini 2.5 Flash trae el razonamiento **encendido por defecto** y con
 presupuesto dinámico: antes de emitir el primer token se gasta el rato que le
 parezca pensando, y ese rato entra íntegro en el TTFT. Medido con el prompt de
-sistema real de este agente, la diferencia es de un factor 4-5 (ver la tabla del
-README): es más caro que el reranker, que hasta ahora era el mayor bloque del
-pipeline.
+sistema real de este agente (README §Presupuesto de latencia): **462 ms sin
+razonamiento contra 956 ms con él**, un factor 2,1. Casi medio segundo por turno,
+y en una llamada de quince turnos eso son siete segundos de silencio regalados.
 
 Se desactiva porque este agente no razona: sigue un guion, lee datos con
 herramientas y repite lo que dice un protocolo. El trabajo difícil —decidir si

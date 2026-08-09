@@ -4,19 +4,22 @@ import { Disposicion } from '@/components/Disposicion'
 import { LimiteDeError } from '@/components/LimiteDeError'
 import { AdminPage } from '@/pages/AdminPage'
 import { NoEncontrada } from '@/pages/NoEncontrada'
+import { PaginaLlamada } from '@/routes/call/PaginaLlamada'
+import { PaginaDetalleLlamada } from '@/routes/calls/PaginaDetalleLlamada'
+import { PaginaHistorial } from '@/routes/calls/PaginaHistorial'
 
 /**
  * Enrutado.
  *
- * Sólo existe `/admin` porque la consola cubre por ahora sólo la gestión de
- * documentos. La estructura ya admite las vistas que faltan —cada una es una
- * línea más dentro de `Disposicion`— y por eso el layout está separado de la
- * página desde el primer día:
+ * `/admin` es la consola de documentos; `/call` y `/calls` son la Fase 5. Las
+ * tres comparten `Disposicion` a propósito: es la misma aplicación, y meter la
+ * pantalla de llamada en un marco propio la habría convertido en otro producto
+ * pegado al lado.
+ *
+ * Quedan pendientes, cada una a una línea de aquí:
  *
  *   <Route path="/pacientes" element={<PacientesPage />} />
- *   <Route path="/llamadas"  element={<LlamadasPage />} />
  *   <Route path="/trazas"    element={<TrazasPage />} />
- *   <Route path="/call"      element={<LlamadaPage />} />   (Fase 5, fuera del layout)
  */
 export function App() {
   return (
@@ -26,6 +29,9 @@ export function App() {
           <Route element={<Disposicion />}>
             <Route path="/" element={<Navigate to="/admin" replace />} />
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/call" element={<PaginaLlamada />} />
+            <Route path="/calls" element={<PaginaHistorial />} />
+            <Route path="/calls/:id" element={<PaginaDetalleLlamada />} />
             <Route path="*" element={<NoEncontrada />} />
           </Route>
         </Routes>

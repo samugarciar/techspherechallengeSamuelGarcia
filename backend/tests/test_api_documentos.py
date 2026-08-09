@@ -222,6 +222,27 @@ async def test_listado_ordena_y_filtra(cliente, cabeceras):
     assert cuerpo["total"] == 3, "el total ignora la paginación"
 
 
+async def test_el_total_sobrevive_a_una_pagina_vacia(cliente, cabeceras):
+    """`count(*) OVER ()` viaja DENTRO de las filas: sin filas, no hay total.
+
+    Con un `offset` más allá del final la consulta devuelve cero filas y el
+    endpoint respondía `total: 0` habiendo tres documentos. El contrato dice que
+    `total` es el número de documentos que casan con el filtro, no los de la
+    página, y quien pagine —o quien pinte «3 de 12»— se lo cree.
+    """
+    for nombre in ("uno.md", "dos.md", "tres.md"):
+        await insertar_documento(filename=nombre, estado="ready")
+
+    r = await cliente.get("/api/documents", params={"limit": 2, "offset": 10}, headers=cabeceras)
+    cuerpo = r.json()
+    assert cuerpo["documentos"] == []
+    assert cuerpo["total"] == 3, "el total no puede depender de que la página traiga filas"
+
+    # Y con un filtro que no casa con nada, el total sí es 0 de verdad.
+    r = await cliente.get("/api/documents", params={"q": "no-existe-esto"}, headers=cabeceras)
+    assert r.json() == {"documentos": [], "total": 0}
+
+
 async def test_listado_con_estado_invalido(cliente, cabeceras):
     r = await cliente.get("/api/documents", params={"estado": "inventado"}, headers=cabeceras)
     assert r.status_code == 422

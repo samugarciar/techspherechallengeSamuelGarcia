@@ -48,6 +48,16 @@ const DURACION_MINIMA_S = 1.4
 /** Trozos de audio de 60 ms, como los que manda el bucle real. */
 const MS_TROZO_AUDIO = 60
 
+/**
+ * Cuánto audio va el servidor por delante de la reproducción.
+ *
+ * En el bucle real se midieron 5,4 s. La cifra importa: es exactamente lo que un
+ * barge-in tiene que descartar, así que si el simulador soltara la frase entera
+ * de golpe, el contador de «voz descartada» enseñaría veinte segundos y sería
+ * mentira. Se emite por delante, pero sólo esto por delante.
+ */
+const ADELANTO_AUDIO_S = 5.4
+
 function uuid(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
   return `sim-${Math.random().toString(36).slice(2, 10)}`
@@ -137,6 +147,27 @@ export function elegirGuionSimulado(modo: ModoGuion): void {
 
 export function guionSimulado(): ModoGuion {
   return modoGuion
+}
+
+/**
+ * Velocidad del ensayo.
+ *
+ * Una llamada de seguimiento dura unos tres minutos de verdad, y ese es el
+ * tiempo que tarda el guion a 1× — que es lo correcto para ensayar la demo tal
+ * como se verá. Pero repasar la pantalla veinte veces mientras se construye a
+ * ese ritmo es media tarde, así que se puede acelerar. Afecta a los tiempos y a
+ * la cantidad de audio emitido por igual: acelerar no debe inflar la cola.
+ */
+let velocidad = 1
+
+export const VELOCIDADES = [1, 2, 4, 8] as const
+
+export function elegirVelocidadSimulada(nueva: number): void {
+  velocidad = nueva > 0 ? nueva : 1
+}
+
+export function velocidadSimulada(): number {
+  return velocidad
 }
 
 class ServidorLlamadasSimulado {
@@ -512,9 +543,14 @@ class SesionSimulada implements SesionVoz {
     this.manejadores.onMensaje(mensaje)
   }
 
+  /** Toda espera del guion pasa por aquí, que es donde se aplica la velocidad. */
+  private esperar(ms: number): Promise<void> {
+    return this.reloj.esperar(ms / velocidadSimulada())
+  }
+
   private async ejecutar(): Promise<void> {
     this.manejadores.onEstado('conectando')
-    await this.reloj.esperar(320)
+    await this.esperar(320)
     if (this.cerrada) return
     this.manejadores.onEstado('conectado')
     this.emitir({
@@ -529,7 +565,7 @@ class SesionSimulada implements SesionVoz {
     }
 
     const guion = construirGuion(this.paciente, this.modo)
-    await this.reloj.esperar(700)
+    await this.esperar(700)
 
     for (const paso of guion) {
       if (this.cerrada || this.reloj.cancelado) return
@@ -560,11 +596,11 @@ class SesionSimulada implements SesionVoz {
       llm: alrededor(560, 0.35),
       tts: alrededor(230),
     }
-    await this.reloj.esperar((ms.retrieval ?? 0) + (ms.llm ?? 0))
+    await this.esperar((ms.retrieval ?? 0) + (ms.llm ?? 0))
     if (this.cerrada) return
 
     if (paso.citas?.length) this.emitir({ tipo: 'citas', citas: paso.citas })
-    await this.reloj.esperar(ms.tts ?? 0)
+    await this.esperar(ms.tts ?? 0)
     if (this.cerrada) return
 
     this.emitir({ tipo: 'estado', fase: 'hablando' })
@@ -572,12 +608,22 @@ class SesionSimulada implements SesionVoz {
     this.interrumpido = false
 
     const duracion = paso.duracion ?? duracionDe(paso.texto)
-    // El audio se manda MUY por delante de la reproducción, igual que el bucle
-    // real (se midieron 5,4 s de adelanto). Sin ese adelanto no habría nada que
-    // vaciar en un barge-in y la interrupción sería una animación bonita.
-    this.emitirAudio(duracion)
 
-    const dicho = await this.decirProgresivo(paso.texto, duracion, 'agente')
+    // El audio se manda por delante de la reproducción, igual que el bucle real:
+    // primero el adelanto de golpe, y luego reponiendo lo que se va consumiendo.
+    // Sin ese adelanto no habría nada que vaciar en un barge-in y la
+    // interrupción sería una animación bonita; con la frase entera de golpe, el
+    // contador de voz descartada mentiría en sentido contrario.
+    let audioEmitido = Math.min(duracion, ADELANTO_AUDIO_S)
+    this.emitirAudio(audioEmitido)
+
+    const dicho = await this.decirProgresivo(paso.texto, duracion, 'agente', (dichos) => {
+      const objetivo = Math.min(duracion, dichos + ADELANTO_AUDIO_S)
+      if (objetivo > audioEmitido) {
+        this.emitirAudio(objetivo - audioEmitido)
+        audioEmitido = objetivo
+      }
+    })
     this._hablando = false
 
     const textoFinal = this.interrumpido ? `${dicho.trim()}…` : paso.texto
@@ -592,7 +638,7 @@ class SesionSimulada implements SesionVoz {
 
   private async turnoPaciente(paso: Extract<PasoGuion, { clase: 'paciente' }>): Promise<void> {
     this.emitir({ tipo: 'estado', fase: 'escuchando' })
-    await this.reloj.esperar((paso.espera ?? 1.2) * 1000)
+    await this.esperar((paso.espera ?? 1.2) * 1000)
     if (this.cerrada) return
 
     await this.decirProgresivo(paso.texto, duracionDe(paso.texto), 'paciente')
@@ -618,7 +664,7 @@ class SesionSimulada implements SesionVoz {
     }
     // Un respiro antes de que el agente reaccione: instantáneo se lee como un
     // fallo, y en la demo este es el momento que hay que dejar ver.
-    await this.reloj.esperar(700)
+    await this.esperar(700)
   }
 
   private async finalizar(motivo: 'completada' | 'escalada' | 'cortada'): Promise<void> {
@@ -627,7 +673,7 @@ class SesionSimulada implements SesionVoz {
       this.registro.terminada = new Date().toISOString()
     }
     this.emitir({ tipo: 'fin', motivo })
-    await this.reloj.esperar(200)
+    await this.esperar(200)
     this.cerrar()
   }
 
@@ -639,6 +685,7 @@ class SesionSimulada implements SesionVoz {
     texto: string,
     duracion: number,
     quien: QuienHabla,
+    alAvanzar?: (segundosDichos: number) => void,
   ): Promise<string> {
     const palabras = texto.split(' ')
     const pasos = Math.max(1, Math.ceil(palabras.length / 3))
@@ -648,17 +695,25 @@ class SesionSimulada implements SesionVoz {
     for (let i = 0; i < pasos; i += 1) {
       dicho = palabras.slice(0, Math.min(palabras.length, (i + 1) * 3)).join(' ')
       this.emitir({ tipo: 'transcripcion', quien, texto: dicho, parcial: true })
-      await this.reloj.esperar(porPaso * 1000)
+      alAvanzar?.(porPaso * (i + 1))
+      await this.esperar(porPaso * 1000)
       if (this.cerrada || this.interrumpido) break
     }
     return dicho
   }
 
-  /** Muestras a cero: llenan el buffer del cliente sin sonar. */
+  /**
+   * Muestras a cero: llenan el buffer del cliente sin sonar.
+   *
+   * La cantidad se divide por la velocidad de ensayo. Si no se dividiera, a 4×
+   * el guion soltaría cuatro veces más audio del que da tiempo a reproducir y la
+   * cola crecería sin parar hasta parecer un fallo del reproductor.
+   */
   private emitirAudio(duracionS: number): void {
     if (this.cerrada) return
+    const segundos = duracionS / velocidadSimulada()
     const porTrozo = Math.round((SR_SALIDA * MS_TROZO_AUDIO) / 1000)
-    const trozos = Math.ceil((duracionS * SR_SALIDA) / porTrozo)
+    const trozos = Math.ceil((segundos * SR_SALIDA) / porTrozo)
     for (let i = 0; i < trozos; i += 1) {
       this.manejadores.onAudio(new Int16Array(porTrozo))
     }

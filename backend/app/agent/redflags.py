@@ -150,6 +150,14 @@ negación— por lo que viene después: una conjunción interrogativa o un adver
 de duda. Sin esta excepción, la muletilla más común del español por teléfono
 apagaría media detección."""
 
+_NEGADOR_FALSO = re.compile(r"sin\s+(?:parar|cesar|aire|descanso|control|freno)\b")
+"""«Sin» que no niega nada: forma parte del síntoma.
+
+«sangra sin parar» y «me quedo sin aire» son las dos alarmas más claras que
+existen, y las dos llevan un negador dentro. Sin esta excepción, el barrido de
+negaciones las apagaba — y en silencio, que es lo peor: el detector no fallaba,
+simplemente no encontraba nada."""
+
 _VENTANA_NEGACION = 4
 """Palabras que alcanza una negación.
 
@@ -186,6 +194,8 @@ def _esta_negado(texto: str, inicio: int, fin: int | None = None) -> bool:
         if neg.start() == inicio:
             continue
         if _NO_EPISTEMICO.match(texto, neg.end()):
+            continue
+        if _NEGADOR_FALSO.match(texto, neg.start()):
             continue
         limite = inicio if neg.end() <= inicio else fin
         entre = texto[neg.end():limite]

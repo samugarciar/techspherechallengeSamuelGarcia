@@ -106,6 +106,13 @@ async def listar(
 ) -> dict[str, Any]:
     """Documentos ordenados por fecha de subida, del más reciente al más antiguo."""
     patron = f"%{q.strip()}%" if q and q.strip() else None
+    parametros = {"estado": estado, "patron": patron, "limit": limit, "offset": offset}
+    _FILTRO = """
+        WHERE (%(estado)s::text IS NULL OR d.status = %(estado)s)
+          AND (%(patron)s::text IS NULL
+               OR d.filename ILIKE %(patron)s
+               OR coalesce(d.title, '') ILIKE %(patron)s)
+    """
 
     async with connection() as conn:
         cur = await conn.execute(
@@ -115,18 +122,32 @@ async def listar(
             f"""
             SELECT {_COLUMNAS}, count(*) OVER () AS total
             FROM documents d
-            WHERE (%(estado)s::text IS NULL OR d.status = %(estado)s)
-              AND (%(patron)s::text IS NULL
-                   OR d.filename ILIKE %(patron)s
-                   OR coalesce(d.title, '') ILIKE %(patron)s)
+            {_FILTRO}
             ORDER BY d.created_at DESC, d.id DESC
             LIMIT %(limit)s OFFSET %(offset)s
             """,
-            {"estado": estado, "patron": patron, "limit": limit, "offset": offset},
+            parametros,
         )
         filas = await cur.fetchall()
 
-    total = filas[0]["total"] if filas else 0
+        if filas:
+            total = filas[0]["total"]
+        elif offset:
+            # `count(*) OVER ()` viaja dentro de las filas, así que una página
+            # vacía no trae total. Sin esto, pedir un offset pasado del final
+            # respondía `total: 0` habiendo documentos — y el contrato dice que
+            # `total` cuenta los que casan con el filtro, no los de la página.
+            # El viaje extra solo se paga en ese caso, que es el raro.
+            cur = await conn.execute(
+                f"SELECT count(*) AS total FROM documents d {_FILTRO}", parametros
+            )
+            fila = await cur.fetchone()
+            total = int(fila["total"]) if fila else 0
+        else:
+            # Sin filas y sin offset no hay nada que casara: el 0 es el de verdad
+            # y no hace falta preguntarlo dos veces.
+            total = 0
+
     return {"documentos": [_documento(f) for f in filas], "total": total}
 
 

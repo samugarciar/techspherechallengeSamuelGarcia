@@ -188,7 +188,7 @@ class ServidorSimulado {
 
   async salud(): Promise<Salud> {
     await this.latencia(40)
-    return { ok: true, db: true, version: '0.1.0-simulado' }
+    return { ok: true, db: true, version: '0.1.0-simulado', modelos_listos: true }
   }
 
   async listar(parametros: {

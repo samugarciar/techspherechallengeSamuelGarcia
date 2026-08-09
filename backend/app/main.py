@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import ajustes, documentos, errores, eventos, rag, salud
+from app.api import ajustes, documentos, errores, eventos, llamadas, rag, salud
 from app.db.pool import close_pool, open_pool
 
 log = logging.getLogger("api")
@@ -105,6 +105,10 @@ app.include_router(eventos.router, prefix="/api/documents")
 app.include_router(documentos.router, prefix="/api/documents")
 app.include_router(rag.router, prefix="/api/rag")
 app.include_router(ajustes.router, prefix="/api/settings")
+# Prefijo `/api` a secas: este router publica dos raíces del contrato,
+# `/patients` y `/calls`. No necesita VOZ=1 — es texto y SQL, no carga Whisper
+# ni el TTS; solo `POST /calls/{id}/mensaje` llama al LLM y al RAG.
+app.include_router(llamadas.router, prefix="/api")
 
 
 # --- Voz -------------------------------------------------------------------

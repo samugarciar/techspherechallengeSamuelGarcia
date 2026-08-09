@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils'
 type Prueba =
   | { estado: 'inactiva' }
   | { estado: 'probando' }
-  | { estado: 'ok'; version: string }
+  | { estado: 'ok'; version: string; modelosListos: boolean }
   | { estado: 'fallo'; mensaje: string }
 
 export function ControlToken({ simulado }: { simulado: boolean }) {
@@ -102,6 +102,12 @@ export function ControlToken({ simulado }: { simulado: boolean }) {
           {prueba.estado === 'ok' ? (
             <Aviso tono="exito" titulo="Conexión correcta">
               El backend responde y acepta el token. Versión {prueba.version}.
+              {/* La primera consulta al RAG en frío tarda 13 s medidos mientras
+                  bge-m3 se carga. Decirlo aquí, antes de la demo, evita
+                  descubrirlo delante del jurado. */}
+              {prueba.modelosListos
+                ? ' Los modelos del RAG ya están cargados.'
+                : ' Los modelos del RAG todavía se están cargando: la primera consulta tardará unos segundos.'}
             </Aviso>
           ) : null}
           {prueba.estado === 'fallo' ? <Aviso tono="error">{prueba.mensaje}</Aviso> : null}
@@ -119,7 +125,13 @@ export function ControlToken({ simulado }: { simulado: boolean }) {
               try {
                 const salud = await api.salud()
                 await api.listar({ limit: 1 })
-                setPrueba({ estado: 'ok', version: salud.version })
+                setPrueba({
+                  estado: 'ok',
+                  version: salud.version,
+                  // Un backend que no publique el campo se trata como listo: no
+                  // hay que asustar por una versión antigua del servidor.
+                  modelosListos: salud.modelos_listos !== false,
+                })
               } catch (causa) {
                 setPrueba({ estado: 'fallo', mensaje: mensajeDeError(causa) })
               }

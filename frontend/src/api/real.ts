@@ -1,6 +1,6 @@
 import type { ClienteApi, OpcionesSubida, ParametrosListado } from '@/api/cliente'
 import { abrirFlujoReal } from '@/api/flujo'
-import { pedirJson, subirConProgreso } from '@/api/http'
+import { pedirJson, subirConProgreso, TIEMPO_LIMITE_RAG_MS } from '@/api/http'
 import { normalizarDetalle, normalizarDocumento } from '@/api/normalizar'
 import type { ListaDocumentos, RespuestaRag, ResultadoBorrado, Salud } from '@/types/api'
 
@@ -54,6 +54,9 @@ export const clienteReal: ClienteApi = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ consulta, top_k: topK }),
+      // El único endpoint que puede tardar más de 15 s, y solo la primera vez:
+      // ver TIEMPO_LIMITE_RAG_MS.
+      tiempoLimiteMs: TIEMPO_LIMITE_RAG_MS,
     })
     return {
       fragmentos: Array.isArray(datos?.fragmentos) ? datos.fragmentos : [],

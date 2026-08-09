@@ -93,6 +93,16 @@ export interface Salud {
   ok: boolean
   db: boolean
   version: string
+  /**
+   * ¿Están bge-m3 y el reranker ya en memoria?
+   *
+   * No está en el contrato: lo añadió el backend (`app/api/salud.py`) y estaba
+   * sin consumir. Merece la pena leerlo porque distingue los dos «no va» que
+   * más se parecen en pantalla: el backend caído y el backend arrancando. La
+   * primera consulta al RAG en frío tarda 13 s medidos, y sin este dato eso se
+   * ve como un servidor roto. Opcional porque un backend anterior no lo manda.
+   */
+  modelos_listos?: boolean
 }
 
 /** Códigos de error del contrato. Se admite `string` porque un backend en obras

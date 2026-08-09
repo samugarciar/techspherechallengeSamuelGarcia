@@ -39,10 +39,17 @@ export interface ManejadoresFlujo {
   onEliminado: (evento: EventoEliminado) => void
   onEstado: (estado: EstadoConexion, intento: number) => void
   /**
-   * Se dispara en cada (re)conexión. Quien escucha DEBE recargar la lista entera:
-   * el contrato no numera los eventos ni admite `Last-Event-ID`, así que todo lo
-   * ocurrido mientras el flujo estaba caído es irrecuperable por el flujo mismo.
-   * Una recarga es barata y deja la pantalla siempre consistente.
+   * Se dispara en cada (re)conexión. Quien escucha DEBE recargar la lista entera.
+   *
+   * (Corrección de este comentario, que decía que el contrato «no numera los
+   * eventos ni admite Last-Event-ID»: sí lo hace — cada evento lleva `id` con la
+   * marca del servidor y `GET /api/documents/stream` reanuda desde ella. Lo que
+   * pasa es que este cliente cierra el `EventSource` y abre uno nuevo para poder
+   * meter su propio backoff, y un `EventSource` recién creado no manda esa
+   * cabecera. Se mantiene así a propósito: la reanudación exacta ahorraría unos
+   * pocos eventos y la recarga completa es la única forma de recuperar también
+   * lo que el flujo no publica —`filename`, `title`, `size_bytes`— si el que
+   * cambió fue un documento que esta pestaña no conocía.)
    */
   onResincronizar?: () => void
 }

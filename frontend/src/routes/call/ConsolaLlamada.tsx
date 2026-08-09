@@ -185,7 +185,13 @@ function EstadoDelCanal({ llamada }: { llamada: LlamadaVoz }) {
       </dl>
 
       {MODO_SIMULADO ? (
-        <div className="flex flex-wrap gap-2 border-t border-borde px-5 py-3">
+        <div className="space-y-2.5 border-t border-borde px-5 py-3">
+          <p className="text-xs leading-relaxed text-tinta-tenue">
+            <span className="font-medium text-ambar">Llamada simulada.</span> El guion viene de{' '}
+            <code className="font-mono">src/api/llamadas/mock</code>, no hay micrófono abierto y el
+            audio son muestras a cero. La cola y el vaciado sí son reales.
+          </p>
+          <div className="flex flex-wrap gap-2">
           <Boton
             variante="fantasma"
             tamano="sm"
@@ -204,6 +210,7 @@ function EstadoDelCanal({ llamada }: { llamada: LlamadaVoz }) {
             <Unplug />
             Simular caída
           </Boton>
+          </div>
         </div>
       ) : null}
     </Tarjeta>

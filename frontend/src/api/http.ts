@@ -15,6 +15,22 @@ export const BASE_API = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
  *  y `POST /api/documents` responde 202 sin esperar al procesamiento. */
 const TIEMPO_LIMITE_MS = 15_000
 
+/**
+ * Excepción medida, no supuesta: `POST /api/rag/query` carga bge-m3 en la
+ * primera llamada si el servidor arrancó sin precarga, y eso tarda **13,3 s**
+ * (medido contra el backend real, en frío). Con el límite de 15 s la consulta
+ * cabía por los pelos; en cuanto el reranker también tiene que cargarse —lo hace
+ * solo cuando hay candidatos, o sea justo cuando hay documentos que enseñar— se
+ * pasa, y la pantalla dice «El servidor tardó demasiado en responder. Puede estar
+ * procesando o caído» en el minuto exacto de la demo.
+ *
+ * Se sube el techo en vez de bajar la latencia porque la latencia no es de esta
+ * capa: `app/main.py` ya precarga los modelos al arrancar y `GET /api/health`
+ * publica `modelos_listos` para saber cuándo. Esto solo evita que un arranque en
+ * frío se vea como un backend roto.
+ */
+export const TIEMPO_LIMITE_RAG_MS = 60_000
+
 type Parametros = Record<string, string | number | undefined | null>
 
 export function urlApi(camino: string, parametros?: Parametros): string {
@@ -46,15 +62,15 @@ async function cuerpoJson(respuesta: Response): Promise<unknown> {
 
 export async function pedirJson<T>(
   camino: string,
-  opciones: RequestInit & { parametros?: Parametros } = {},
+  opciones: RequestInit & { parametros?: Parametros; tiempoLimiteMs?: number } = {},
 ): Promise<T> {
-  const { parametros, signal, ...resto } = opciones
+  const { parametros, signal, tiempoLimiteMs, ...resto } = opciones
   let respuesta: Response
   try {
     respuesta = await fetch(urlApi(camino, parametros), {
       ...resto,
       headers: cabeceras(resto.headers),
-      signal: signal ?? AbortSignal.timeout(TIEMPO_LIMITE_MS),
+      signal: signal ?? AbortSignal.timeout(tiempoLimiteMs ?? TIEMPO_LIMITE_MS),
     })
   } catch (causa) {
     if (causa instanceof DOMException && causa.name === 'AbortError' && signal?.aborted) {

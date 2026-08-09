@@ -21,6 +21,15 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
+        // El bucle de voz. `ws: true` es lo que hace que el proxy negocie el
+        // upgrade en vez de devolver un 404: sin esta entrada, `/ws/voz` desde
+        // el navegador en :5173 no llega a ninguna parte. Mismo razonamiento que
+        // con `/api`: una sola procedencia y ni CORS ni URLs absolutas.
+        '/ws': {
+          target: destino,
+          changeOrigin: true,
+          ws: true,
+        },
         '/api': {
           target: destino,
           changeOrigin: true,

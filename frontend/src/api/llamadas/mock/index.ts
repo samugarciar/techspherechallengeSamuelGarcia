@@ -8,7 +8,13 @@ import { servidorLlamadasSimulado } from '@/api/llamadas/mock/servidor'
  * tres mandos de ensayo de abajo, y esos van siempre detrás de `MODO_SIMULADO`.
  */
 
-export { elegirGuionSimulado, guionSimulado } from '@/api/llamadas/mock/servidor'
+export {
+  elegirGuionSimulado,
+  elegirVelocidadSimulada,
+  guionSimulado,
+  VELOCIDADES,
+  velocidadSimulada,
+} from '@/api/llamadas/mock/servidor'
 export type { ModoGuion } from '@/api/llamadas/mock/guion'
 
 /** Tira la conexión de voz para poder ver el estado de error y el reintento. */

@@ -2,7 +2,14 @@ import { Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 
 import { MODO_SIMULADO } from '@/api'
-import { elegirGuionSimulado, guionSimulado, type ModoGuion } from '@/api/llamadas/mock'
+import {
+  elegirGuionSimulado,
+  elegirVelocidadSimulada,
+  guionSimulado,
+  VELOCIDADES,
+  velocidadSimulada,
+  type ModoGuion,
+} from '@/api/llamadas/mock'
 import { Aviso } from '@/components/ui/aviso'
 import { Boton } from '@/components/ui/boton'
 import { CabeceraTarjeta, Tarjeta } from '@/components/ui/superficie'
@@ -129,46 +136,79 @@ export function PaginaLlamada() {
  */
 function MandosDeEnsayo() {
   const [modo, setModo] = useState<ModoGuion>(guionSimulado())
-
-  const elegir = (nuevo: ModoGuion) => {
-    setModo(nuevo)
-    elegirGuionSimulado(nuevo)
-  }
+  const [velocidad, setVelocidad] = useState<number>(velocidadSimulada())
 
   return (
     <Tarjeta className="border-ambar/35 bg-ambar-suave/40">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3.5">
-        <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-3 px-5 py-3.5">
+        <div className="min-w-[16rem] flex-1">
           <p className="text-[0.8125rem] font-medium text-tinta">Ensayo con datos simulados</p>
           <p className="text-xs leading-snug text-tinta-tenue">
             No hay backend ni micrófono: la conversación viene de un guion con tiempos realistas.
-            El audio que se emite son muestras a cero, así que no se oye nada.
+            El audio que emite son muestras a cero, así que no se oye nada — lo que sí es real es
+            que llena el buffer, para poder probar la interrupción.
           </p>
         </div>
-        <div className="ml-auto flex gap-1 rounded-consola border border-borde bg-superficie p-1">
-          {(
-            [
-              ['con_bandera', 'Con bandera roja'],
-              ['sin_bandera', 'Sin incidencias'],
-            ] as Array<[ModoGuion, string]>
-          ).map(([valor, etiqueta]) => (
-            <button
-              key={valor}
-              type="button"
-              onClick={() => elegir(valor)}
-              aria-pressed={modo === valor}
-              className={
-                modo === valor
-                  ? 'rounded-[0.375rem] bg-primario-suave px-3 py-1 text-xs font-medium text-primario'
-                  : 'rounded-[0.375rem] px-3 py-1 text-xs text-tinta-tenue hover:text-tinta'
-              }
-            >
-              {etiqueta}
-            </button>
-          ))}
-        </div>
+
+        <Selector
+          etiqueta="Guion"
+          opciones={[
+            { valor: 'con_bandera', etiqueta: 'Con bandera roja' },
+            { valor: 'sin_bandera', etiqueta: 'Sin incidencias' },
+          ]}
+          activo={modo}
+          onElegir={(valor) => {
+            setModo(valor as ModoGuion)
+            elegirGuionSimulado(valor as ModoGuion)
+          }}
+        />
+
+        <Selector
+          etiqueta="Velocidad"
+          opciones={VELOCIDADES.map((v) => ({ valor: String(v), etiqueta: `${v}×` }))}
+          activo={String(velocidad)}
+          onElegir={(valor) => {
+            setVelocidad(Number(valor))
+            elegirVelocidadSimulada(Number(valor))
+          }}
+        />
       </div>
     </Tarjeta>
+  )
+}
+
+function Selector({
+  etiqueta,
+  opciones,
+  activo,
+  onElegir,
+}: {
+  etiqueta: string
+  opciones: Array<{ valor: string; etiqueta: string }>
+  activo: string
+  onElegir: (valor: string) => void
+}) {
+  return (
+    <div>
+      <p className="mb-1 text-[0.6875rem] uppercase tracking-wide text-tinta-tenue">{etiqueta}</p>
+      <div className="flex gap-1 rounded-consola border border-borde bg-superficie p-1">
+        {opciones.map((opcion) => (
+          <button
+            key={opcion.valor}
+            type="button"
+            onClick={() => onElegir(opcion.valor)}
+            aria-pressed={activo === opcion.valor}
+            className={
+              activo === opcion.valor
+                ? 'rounded-[0.375rem] bg-primario-suave px-3 py-1 text-xs font-medium text-primario'
+                : 'rounded-[0.375rem] px-3 py-1 text-xs text-tinta-tenue hover:text-tinta'
+            }
+          >
+            {opcion.etiqueta}
+          </button>
+        ))}
+      </div>
+    </div>
   )
 }
 

@@ -10,8 +10,11 @@ desglose de latencias, y que el veredicto de grounding sea el de
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from app.api import rag
+from app.core.config import get_settings
+from app.rag import rerank
 from app.rag.retrieval import Fragmento
 from tests.test_api_utiles import (  # noqa: F401 — pytest registra las fixtures
     _bd,
@@ -140,3 +143,49 @@ async def test_la_consulta_llega_recortada_al_modelo(cliente, cabeceras, monkeyp
     visto = _simular(monkeypatch, [])
     await cliente.post("/api/rag/query", json={"consulta": "  fiebre alta  "}, headers=cabeceras)
     assert visto["consulta_embebida"] == "fiebre alta"
+
+
+# --- El interruptor del reranker ---------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Escalas incompatibles: apagar RERANK_ENABLED deja `hay_evidencia` "
+        "siempre en False. Arreglo pendiente de decisión, fuera del alcance de "
+        "esta revisión (app/rag/rerank.py es de otro agente). Cuando se arregle, "
+        "este test pasará a XPASS y habrá que quitarle el marcador."
+    ),
+)
+async def test_hay_evidencia_sigue_significando_algo_sin_reranker():
+    """RERANK_ENABLED=0 es el escape de latencia documentado, y rompe el grounding.
+
+    Las dos ramas de `reordenar()` devuelven escalas distintas y `hay_evidencia`
+    compara las dos contra el mismo `MIN_RELEVANCE_SCORE = 0.35`:
+
+      · con reranker  -> el cross-encoder pasa por sigmoide, 0..1. 0,35 discrimina.
+      · sin reranker  -> el score es el de RRF, cuyo MÁXIMO TEÓRICO es
+                         1/(60+1) + 1/(60+1) = 0,0328. Nunca llega a 0,35.
+
+    O sea: con el reranker apagado, `hay_evidencia` es False para todo, el
+    agente contesta «no tengo esa información» a preguntas cuyo protocolo tiene
+    delante, y la consola pinta el aviso ámbar sobre una lista de fragmentos
+    perfectamente buenos. El fallo no se ve en ningún test porque todos los que
+    tocan grounding sustituyen `reordenar`.
+
+    Y es un interruptor que se va a tocar: `app/api/rag.py` lo anuncia («si el
+    reranker se dispara, se ve aquí y se apaga con RERANK_ENABLED sin tocar nada
+    más») y el reranker está medido en 585 ms, el mayor bloque del camino de voz.
+
+    Se prueba con la función real, sin cargar ningún modelo: la rama de
+    `rerank_enabled=False` sale antes de tocar el cross-encoder.
+    """
+    ajustes = get_settings()
+    original = ajustes.rerank_enabled
+    ajustes.rerank_enabled = False
+    try:
+        # El mejor candidato posible: primero en las dos listas de la híbrida.
+        mejor = _fragmento(1 / (60 + 1) + 1 / (60 + 1))
+        assert rerank.hay_evidencia(await rerank.reordenar("¿cuándo me ducho?", [mejor], 4))
+    finally:
+        ajustes.rerank_enabled = original

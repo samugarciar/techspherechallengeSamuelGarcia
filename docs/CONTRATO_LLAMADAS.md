@@ -112,4 +112,83 @@ escalamiento destacado.
 
 ## Cambios sobre el contrato
 
-<!-- añadir entradas debajo -->
+### 1. Montar el router de llamadas en `app/main.py` (agente clínico)
+
+`app/main.py` es de otro agente, así que no lo he tocado. El router está escrito
+y probado en `app/api/llamadas.py`. **La línea exacta**, junto a las otras
+`include_router`:
+
+```python
+from app.api import ajustes, documentos, errores, eventos, llamadas, rag, salud
+...
+app.include_router(llamadas.router, prefix="/api")
+```
+
+El prefijo es `/api` a secas y no `/api/calls` porque este router publica dos
+raíces distintas del contrato: `/patients` y `/calls`. El orden respecto a los
+demás `include_router` da igual: no hay solape de rutas.
+
+No necesita `VOZ=1`. Es texto y SQL: no carga Whisper, ni Kokoro, ni el
+reranker. `POST /api/calls/{id}/mensaje` sí llama al LLM y al RAG.
+
+### 2. `GET /api/calls/{id}` publica dos campos más
+
+`respuestas` (el `survey` de la llamada, clave → lo que contestó el paciente) y
+`urgencia_escalada`. Los añade el historial también. Son aditivos: nada de lo
+que el contrato ya definía cambia de forma.
+
+### 3. `POST /api/calls` devuelve además el saludo
+
+```json
+{ "call_id": "uuid", "ws": "/ws/voz?call_id=…",
+  "saludo": "Buenos días. Le llamo del servicio de seguimiento…",
+  "paciente": "María Elena Restrepo Gómez",
+  "cirugia": "Apendicectomía laparoscópica", "dias_postop": 3 }
+```
+
+La primera intervención del agente es **una constante**, no la genera el modelo:
+contiene la declaración de sistema automatizado que exige el AI Act (decisión 4)
+y una frase generada saldría distinta cada vez, sin forma de demostrar que se
+dijo. Devolverla aquí permite que el TTS empiece a sonar sin esperar al LLM.
+
+### 4. Dos endpoints nuevos
+
+| Ruta | Para qué |
+|---|---|
+| `POST /api/calls/{id}/mensaje` | Hablar con el agente **escribiendo**: `{"texto": "…"}` → el turno completo (`texto`, `citas`, `banderas`, `escalada`, `terminar`, `ms`). Es a la Fase 4 lo que `python -m app.rag.query` fue a la Fase 1: prueba guion, herramientas, grounding y escalamiento sin micrófono. Cuando el agente responde mal, separa en dos segundos «el modelo se equivocó» de «Whisper oyó otra cosa» |
+| `POST /api/calls/{id}/fin` | `{"motivo": "completada"\|"escalada"\|"cortada"}` → cierra la llamada y sella `ended_at`. Sin ella, `duracion_s` y `estado` del historial no significan nada |
+
+### 5. El mapa de estados de `calls`
+
+La tabla tiene cuatro estados y el contrato publica tres:
+
+| `calls.status` | `estado` publicado | |
+|---|---|---|
+| `active` | `en_curso` | |
+| `completed` | `completada` | |
+| `escalated` | `completada` | con `escalada: true` |
+| `failed` | `interrumpida` | |
+
+Una llamada escalada se publica como **completada**: escalar no es terminar mal,
+es exactamente lo que el sistema debe hacer. Mezclarla con `interrumpida` haría
+que el historial contara los aciertos como fallos.
+
+### 6. El agente vive en memoria del proceso
+
+El historial de conversación y la fase de la llamada (¿ya hubo alarma?, ¿estoy
+esperando la confirmación?) están en un diccionario del proceso, no en la base.
+Reconstruirlos desde `call_turns` se descartó: la transcripción no contiene los
+resultados de las herramientas, que es justo lo que el modelo necesita para no
+volver a consultarlos. Consecuencia visible: si el backend se reinicia a mitad de
+llamada, el turno siguiente da `404 llamada_no_encontrada`. Con llamadas de tres
+minutos y un solo proceso, es preferible a cubrirlo a medias.
+
+### 7. Recomendación pendiente de Samuel: una séptima herramienta
+
+`obtener_paciente` devuelve la fecha de nacimiento para poder compararla con la
+que diga el paciente. Que el modelo la vea significa que *podría* leerla en voz
+alta antes de que la persona se identifique; hoy se lo impide una regla del
+prompt, que es una petición y no una garantía. La forma sólida es
+`verificar_identidad(fecha_dicha) -> {coincide: bool}`, con la comparación en
+Postgres y el dato nunca en el contexto del modelo. No la he añadido porque el
+contrato fija seis herramientas. Anotado también en `eval/guion_llamada.md`.

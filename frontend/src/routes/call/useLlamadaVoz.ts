@@ -158,6 +158,21 @@ export function useLlamadaVoz(): LlamadaVoz {
           }
 
           despachar({ tipo: 'mensaje', mensaje, instante: desde() })
+
+          // La bandera roja deja además una marca en la propia transcripción.
+          // El cartel de arriba se ve desde lejos, pero desaparece del relato en
+          // cuanto alguien lee la conversación de corrido; y el historial sí
+          // guarda ese turno de sistema, así que sin esto la llamada en vivo y
+          // la llamada revisada después contarían historias distintas.
+          if (mensaje.tipo === 'bandera_roja') {
+            despachar({
+              tipo: 'nota',
+              texto:
+                `Bandera roja: ${mensaje.motivo}. Urgencia: ${mensaje.urgencia ?? 'urgente'}. ` +
+                'El agente abandona el resto del cuestionario.',
+              instante: desde(),
+            })
+          }
         },
         onAudio: (pcm) => repro.encolar(pcm),
         onEstado: (estado) => setConexion(estado),

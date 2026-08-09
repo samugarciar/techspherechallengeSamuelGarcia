@@ -8,12 +8,16 @@ import { cn } from '@/lib/utils'
 /**
  * Marco de la consola.
  *
- * La navegación tiene una sola entrada porque la consola cubre por ahora sólo la
- * gestión de documentos. El array de abajo es el sitio donde entrarán pacientes,
- * llamadas y trazas cuando toque; enseñar hoy pestañas que no llevan a ninguna
- * parte sólo invita al jurado a pulsarlas.
+ * La navegación tiene las secciones que existen de verdad, y ninguna más:
+ * enseñar pestañas que no llevan a ninguna parte sólo invita al jurado a
+ * pulsarlas. El array de abajo es el sitio donde entrarán pacientes y trazas
+ * cuando toque.
  */
-const SECCIONES = [{ camino: '/admin', etiqueta: 'Documentos' }]
+const SECCIONES = [
+  { camino: '/admin', etiqueta: 'Documentos' },
+  { camino: '/call', etiqueta: 'Llamar' },
+  { camino: '/calls', etiqueta: 'Historial' },
+]
 
 export function Disposicion() {
   return (
