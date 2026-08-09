@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.python-version
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Entorno y secretos
+.env
+.env.local
+*.key
+.env.example
+
+BITACORA.md
+
+# Datos subidos por el admin — no van al repo
+storage/documents/*
+!storage/documents/.gitkeep
+
+# Artefactos de los spikes (audio generado, modelos descargados)
+scripts/spikes/audio/
+scripts/spikes/out/
+
+# Modelos locales cacheados por HuggingFace / MLX
+.cache/
+models/
+
+# macOS
+.DS_Store
+
+.claude
+
+# Modelos descargados por los spikes (60 MB, se re-descargan con el script)
+scripts/spikes/piper_voices/
