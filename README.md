@@ -328,7 +328,8 @@ entero, sin estados intermedios observables. Nunca responde con medio protocolo.
 docker compose up -d
 
 # 2. Backend
-cd backend && uv sync
+cd backend && uv sync --all-groups   # --all-groups: pipecat vive en el grupo
+                                     # `voice` y sin él fallan 54 tests
 cp ../.env.example ../.env      # y rellenar GEMINI_API_KEY
 
 # 3. Datos sintéticos de pacientes
