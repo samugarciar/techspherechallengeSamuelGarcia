@@ -108,6 +108,15 @@ class AgenteLlamada(LLMClient):
         self.max_rondas = max_rondas
         self.alarma: BanderaRoja | None = None
         self.ultimo_turno: TurnoAgente | None = None
+        self.saludo: str | None = None
+        """Lo que dijo `apertura()`, para quien tenga que pronunciarlo después.
+
+        `POST /api/calls` genera el saludo y lo registra, pero quien lo dice en
+        voz alta es el WebSocket, que se conecta más tarde. Sin esto tendría que
+        reconstruirlo con `prompts.SALUDO.format(...)` por su cuenta —dos sitios
+        generando la frase que el AI Act obliga a poder demostrar— o rebuscar en
+        `historial[0]`, que deja de ser el saludo en cuanto alguien cambie el
+        orden de los mensajes."""
         self._esperando_confirmacion = False
         self._sistema = prompts.sistema(contexto)
 
@@ -129,6 +138,7 @@ class AgenteLlamada(LLMClient):
         del paciente («sí, soy yo») sin la pregunta que la provocó."""
         texto = prompts.SALUDO.format(nombre=self.contexto.nombre_preferido)
         self.historial.append(Mensaje("assistant", texto))
+        self.saludo = texto
         return texto
 
     # -- el turno -----------------------------------------------------------

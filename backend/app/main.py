@@ -125,8 +125,18 @@ app.include_router(llamadas.router, prefix="/api")
 # Pipecat para producción por solapar el STT con la espera de fin de turno
 # (1.596 ms contra 1.975 ms hasta el primer audio), pero le falta el transporte
 # WebRTC real. Ver docs/VOZ_COMPARATIVA.md.
+#
+# El agente clínico entra por INYECCIÓN, no por un import dentro del pipeline.
+# `crear_router(fabrica_llamada=…)` recibe una función que, dado el `call_id` de
+# la query, devuelve el agente de esa llamada concreta. Aquí es el único sitio
+# donde las Fases 3 y 4 se conocen: `app/voice/**` no importa `app/agent/**` ni
+# al revés, así que el arnés de medición sigue pudiendo montar el mismo bucle de
+# voz con `ClienteLLMFalso` y comparar manzanas con manzanas.
+#
+# Sin `?call_id=…` la sesión cae al LLM falso: es la «sesión suelta sin
+# persistir» del contrato, que es lo que usa scripts/spikes/cliente_voz/.
 if os.environ.get("VOZ", "0").lower() in ("1", "true", "si", "sí"):
     from app.voice.pipeline_ws import crear_router
 
-    app.include_router(crear_router())
-    log.info("router de voz montado en /ws/voz")
+    app.include_router(crear_router(fabrica_llamada=llamadas.abrir_sesion_de_voz))
+    log.info("router de voz montado en /ws/voz, con el agente clínico enchufado")

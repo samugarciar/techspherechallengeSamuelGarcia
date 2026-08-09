@@ -26,16 +26,30 @@ haría que el historial contara como fallos los aciertos.
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
+from functools import partial
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
 
+from app.agent import redflags
 from app.agent.agente import AgenteLlamada, guardar_turno
+from app.agent.llm_client import LLMClient, Mensaje, RespuestaLLM
 from app.api import errores
 from app.api.deps import exigir_admin
 from app.db.pool import connection
+
+if TYPE_CHECKING:
+    # Solo para el tipo. Importar `app.voice.pipeline_ws` de verdad aquí
+    # arrastraría numpy, el VAD y el motor de TTS a TODOS los despliegues, y este
+    # router se monta siempre —sin `VOZ=1`— justamente porque es texto y SQL.
+    from app.voice.pipeline_ws import MetricasTurno
+
+log = logging.getLogger("api.llamadas")
 
 router = APIRouter(tags=["llamadas"], dependencies=[Depends(exigir_admin)])
 
@@ -81,6 +95,14 @@ def _llamada_cerrada(call_id: UUID | str) -> errores.ErrorAPI:
 # el reinicio a mitad de llamada no es un caso que haya que cubrir; que se note
 # si ocurre (404 al turno siguiente) es preferible a cubrirlo a medias.
 _AGENTES: dict[str, AgenteLlamada] = {}
+
+# Qué llamadas tienen ahora mismo un WebSocket de voz enganchado. Sirve para una
+# sola cosa y merece la pena: impedir que dos conexiones compartan el mismo
+# `AgenteLlamada`. Pasa con un doble clic en «Llamar» o con una pestaña
+# duplicada, y el síntoma —dos turnos entrelazados en un único historial, el
+# agente contestando a una pregunta con el contexto de la otra— no se parece en
+# nada a su causa.
+_VOCES: dict[str, SesionDeVoz] = {}
 
 
 class NuevaLlamada(BaseModel):
@@ -264,6 +286,245 @@ async def _existe(call_id: UUID) -> bool:
     async with connection() as conn:
         cur = await conn.execute("SELECT 1 FROM calls WHERE id = %s", (call_id,))
         return await cur.fetchone() is not None
+
+
+# ---------------------------------------------------------------------------
+# La costura con el bucle de voz — `/ws/voz?call_id=…`
+# ---------------------------------------------------------------------------
+EnviarEvento = Callable[[dict[str, Any]], Awaitable[None]]
+
+ESPERA_VACIADO_S = 5.0
+"""Cuánto se espera a que termine de escribirse la transcripción al colgar.
+
+Hay cola porque escribir no puede costarle latencia al paciente, y hay tope
+porque al colgar ya no hay nadie esperando: si Postgres no responde en cinco
+segundos, se pierde la cola y se registra en el log. Dejar el cierre del
+WebSocket colgado de una base lenta convertiría un problema de escritura en un
+socket zombi por llamada."""
+
+
+class SesionDeVoz(LLMClient):
+    """El agente clínico de UNA llamada, hablando por el WebSocket de voz.
+
+    Es la pieza que faltaba entre las Fases 3, 4 y 5, y hace exactamente tres
+    cosas que ninguna de las tres podía hacer sola:
+
+    1. **Presenta al agente como un `LLMClient`**, que es lo único que `SesionVoz`
+       sabe consumir. `AgenteLlamada` ya implementaba esa interfaz a propósito;
+       aquí se envuelve para poder mirar el turno por dentro al pasar.
+    2. **Publica lo que el agente produce** —citas y banderas rojas— en el
+       instante en que las produce, antes de que salga el audio de esa respuesta.
+       Después sería reconstruirlas: el cliente pega las citas a la intervención
+       que fundamentan, y si llegan tarde se pegan a la siguiente.
+    3. **Registra la conversación en `call_turns`** por una cola, fuera del
+       camino crítico.
+
+    ── Por qué la persistencia va por una cola ─────────────────────────────
+    Dos propiedades que un `await conn.execute(...)` en línea no da:
+
+    - *No cuesta latencia.* El registro se encola en microsegundos y el turno
+      siguiente empieza sin esperar a la base. Una escritura lenta retrasaría el
+      audio, que es lo único que el paciente percibe.
+    - *Un fallo de base no corta la llamada.* El trabajador registra el error y
+      sigue. Perder la transcripción de un turno es malo; colgarle el teléfono a
+      un paciente en seguimiento clínico es peor.
+
+    Y un consumidor único, no `create_task` por escritura: `call_turns` se ordena
+    por `id` (`GET /api/calls/{id}`), así que dos inserciones en vuelo a la vez
+    pueden aterrizar cambiadas y dejar al agente contestando antes de la pregunta.
+    Con un solo trabajador el orden es el de la conversación por construcción.
+    """
+
+    def __init__(self, call_id: UUID, agente: AgenteLlamada, emitir: EnviarEvento) -> None:
+        self.call_id = call_id
+        self.agente = agente
+        self._emitir = emitir
+        self._motivo_fin: str | None = None
+        self._citas: list[Any] = []
+        self._cerrada = False
+        self._cola: asyncio.Queue[Callable[[], Awaitable[None]] | None] = asyncio.Queue()
+        self._escritor = asyncio.create_task(self._escribir_pendientes())
+
+    # -- interfaz LLMClient: lo que `SesionVoz` consume ---------------------
+    async def stream(self, sistema: str, mensajes: list[Mensaje]) -> AsyncIterator[str]:
+        """Un turno del agente, troceado en frases para que el TTS arranque antes.
+
+        El troceado no se repite aquí: lo hace `AgenteLlamada.stream`, y este
+        método se limita a mirar el turno al pasar. Duplicar el troceado sería
+        tener dos sitios decidiendo dónde se corta una frase clínica.
+        """
+        anunciado = False
+        async for trozo in self.agente.stream(sistema, mensajes):
+            if not anunciado:
+                # En la primera frase, no al final: el `stream` se consume a la
+                # vez que se sintetiza, así que anunciar al terminar dejaría las
+                # citas llegando después del audio que fundamentan.
+                anunciado = True
+                await self._anunciar(self.agente.ultimo_turno)
+            yield trozo
+        if not anunciado:
+            # Un turno sin texto no debería ocurrir —`_rendirse()` siempre dice
+            # algo— pero si ocurriera, una bandera roja no puede perderse por no
+            # haber tenido audio al que engancharse.
+            await self._anunciar(self.agente.ultimo_turno)
+
+    async def responder(
+        self,
+        sistema: str,
+        mensajes: list[Mensaje],
+        herramientas: list[dict[str, Any]] | None = None,
+    ) -> RespuestaLLM:
+        """Presente por la interfaz; el bucle de voz solo usa `stream`."""
+        respuesta = await self.agente.responder(sistema, mensajes, herramientas)
+        await self._anunciar(self.agente.ultimo_turno)
+        return respuesta
+
+    async def _anunciar(self, turno: Any | None) -> None:
+        if turno is None:
+            return
+
+        # La bandera roja va ANTES que las citas: es el titular de la pantalla y
+        # el momento clínico de la demo. Que llegue primero es gratis y evita que
+        # se pinte detrás de un panel de documentos.
+        if turno.banderas:
+            peor = redflags.peor(turno.banderas)
+            await self._emitir(
+                {"tipo": "bandera_roja", "motivo": peor.motivo, "urgencia": peor.urgencia}
+            )
+        if turno.citas:
+            await self._emitir(
+                {"tipo": "citas", "citas": [c.a_dict() for c in turno.citas]}
+            )
+
+        # Se guardan para `turno_terminado`, que es quien persiste: allí ya no se
+        # puede preguntar por ellas porque el agente habrá empezado el turno
+        # siguiente y `nuevo_turno()` las habrá vaciado.
+        self._citas = list(turno.citas)
+
+        if turno.terminar:
+            # Decisión 2 del contrato: la alarma se dio, el paciente confirmó que
+            # la entendió, y aquí se acaba la llamada.
+            self._motivo_fin = "escalada" if turno.escalada else "completada"
+
+    # -- interfaz LlamadaEnCurso: lo que el pipeline consulta ---------------
+    def saludo_inicial(self) -> str | None:
+        return self.agente.saludo
+
+    def motivo_de_fin(self) -> str | None:
+        return self._motivo_fin
+
+    def turno_terminado(self, metricas: MetricasTurno) -> None:
+        """Encola la transcripción del turno. Síncrona y sin `await` a propósito.
+
+        Se llama desde el `finally` del turno de voz, a veces bajo cancelación
+        (un barge-in), donde esperar a nada es inseguro. Ver `LlamadaEnCurso` en
+        `app/voice/pipeline_ws.py`.
+
+        Las latencias se reparten entre las dos filas según a quién describen: el
+        `stt` es el coste de entender al paciente y va en su turno; el resto es
+        el coste de contestarle y va en el del agente. Meterlas todas en una fila
+        haría que el panel del historial atribuyera al agente el tiempo de
+        Whisper.
+        """
+        if metricas.texto_paciente:
+            self._encolar(
+                partial(
+                    guardar_turno, self.call_id, "patient", metricas.texto_paciente,
+                    None, {"stt": round(metricas.stt_ms)},
+                )
+            )
+        if metricas.texto_agente:
+            self._encolar(
+                partial(
+                    guardar_turno, self.call_id, "agent", metricas.texto_agente,
+                    self._citas,
+                    {
+                        "llm": round(metricas.llm_ttft_ms),
+                        "tts": round(metricas.tts_primera_frase_ms),
+                        "total": round(metricas.primer_audio_ms),
+                    },
+                )
+            )
+
+    async def cerrar(self) -> None:
+        """Vacía la cola y sella la llamada. Idempotente."""
+        if self._cerrada:
+            return
+        self._cerrada = True
+
+        await self._cola.put(None)
+        try:
+            await asyncio.wait_for(self._escritor, ESPERA_VACIADO_S)
+        except TimeoutError:
+            log.warning(
+                "la transcripción de %s no terminó de escribirse en %.0f s; se descarta",
+                self.call_id, ESPERA_VACIADO_S,
+            )
+            self._escritor.cancel()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("fallo vaciando la transcripción de %s", self.call_id)
+
+        try:
+            # `cortada` es el caso por defecto —se fue el WebSocket— y no
+            # `completada`: si el agente hubiera dado la llamada por terminada,
+            # `_motivo_fin` lo diría. `_cerrar` no toca una llamada ya cerrada,
+            # así que colgar después de una escalada no la reescribe.
+            await _cerrar(self.call_id, self._motivo_fin or "cortada")
+        except Exception:
+            log.exception("no se pudo sellar la llamada %s al colgar", self.call_id)
+
+        _AGENTES.pop(str(self.call_id), None)
+        _VOCES.pop(str(self.call_id), None)
+
+    # -- la cola ------------------------------------------------------------
+    def _encolar(self, trabajo: Callable[[], Awaitable[None]]) -> None:
+        if self._cerrada:
+            return
+        self._cola.put_nowait(trabajo)
+
+    async def _escribir_pendientes(self) -> None:
+        while (trabajo := await self._cola.get()) is not None:
+            try:
+                await trabajo()
+            except Exception:
+                # Se registra y se sigue con el siguiente. Un turno perdido no
+                # justifica perder los que vengan detrás.
+                log.exception("no se pudo registrar un turno de la llamada %s", self.call_id)
+
+
+async def abrir_sesion_de_voz(call_id: str, emitir: EnviarEvento) -> SesionDeVoz | None:
+    """Fábrica que `app/main.py` le pasa a `crear_router()`.
+
+    Devuelve `None` —y el WebSocket se cierra diciendo por qué— en los tres casos
+    en que enganchar la voz a esta llamada sería mentir:
+
+    - el `call_id` no es un UUID;
+    - no hay agente vivo para él, que en la práctica es «el backend se reinició a
+      mitad de llamada» (§Cambios punto 6 del contrato);
+    - ya hay otro WebSocket hablando con esa misma llamada.
+    """
+    try:
+        uuid = UUID(call_id)
+    except ValueError:
+        log.warning("call_id no es un UUID: %r", call_id)
+        return None
+
+    agente = _AGENTES.get(str(uuid))
+    if agente is None:
+        log.warning(
+            "no hay ninguna llamada viva con id %s; ¿se reinició el backend a mitad?", uuid
+        )
+        return None
+
+    if str(uuid) in _VOCES:
+        log.warning("la llamada %s ya tiene un WebSocket de voz enganchado", uuid)
+        return None
+
+    sesion = SesionDeVoz(uuid, agente, emitir)
+    _VOCES[str(uuid)] = sesion
+    return sesion
 
 
 # ---------------------------------------------------------------------------

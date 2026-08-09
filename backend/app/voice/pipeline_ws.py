@@ -39,7 +39,7 @@ import wave
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
@@ -205,6 +205,58 @@ class MetricasBargeIn:
 
 
 # ---------------------------------------------------------------------------
+# El enganche con una llamada de verdad
+# ---------------------------------------------------------------------------
+class LlamadaEnCurso(Protocol):
+    """Lo que el bucle de voz necesita saber de una llamada persistida, y nada más.
+
+    `SesionVoz` no sabe qué es un paciente, ni una fila de `calls`, ni el agente
+    clínico de la Fase 4: sigue hablando con un `LLMClient` y, opcionalmente, con
+    estos cuatro métodos. Quien los implementa es `app/api/llamadas.py` —que sí
+    sabe de las dos cosas— y quien los enchufa es `app/main.py`.
+
+    Se descartó importar el agente aquí (`from app.agent.agente import ...`
+    dentro del pipeline). Ataría el bucle de voz a la Fase 4 y, sobre todo,
+    obligaría al arnés de medición (`scripts/spikes/spike_voz.py`) y a los tests
+    de voz a arrastrar Postgres y el LLM real para medir milisegundos de audio.
+    Con la inyección, cambiar el agente clínico por `ClienteLLMFalso` sigue
+    siendo un argumento.
+
+    ── Por qué `turno_terminado` NO es `async` ──────────────────────────────
+    Se llama dentro del `finally` del turno, con el paciente al teléfono, y
+    `_cancelar_turno()` espera a esa tarea antes de empezar el turno siguiente:
+    un `await` lento aquí —una escritura en la base que tarda— se paga en
+    silencio delante del paciente. Siendo síncrono, lo único que se puede hacer
+    es encolar y volver, que es exactamente lo que debe ocurrir. La firma impone
+    la regla en vez de pedirla en un comentario.
+
+    Y por eso también se llama desde el `finally`: un turno cortado por barge-in
+    o reventado a mitad **también** ocurrió, y la transcripción tiene que
+    contarlo. Un `await` no sería seguro ahí; una llamada síncrona sí.
+    """
+
+    def saludo_inicial(self) -> str | None:
+        """La primera intervención del agente, si la llamada ya la tiene escrita.
+
+        La dice el servidor al conectar: es una constante (declaración de sistema
+        automatizado del AI Act) que `POST /api/calls` ya generó y registró, así
+        que aquí solo hay que pronunciarla."""
+
+    def turno_terminado(self, metricas: MetricasTurno) -> None:
+        """Un turno que ya se ha emitido —entero o a medias—, para registrarlo."""
+
+    def motivo_de_fin(self) -> str | None:
+        """`completada` | `escalada` | `cortada` si la llamada debe terminar ya.
+
+        Se consulta al cerrar cada turno. Es el camino por el que la decisión 2
+        del contrato —ante bandera roja el agente corta— llega hasta el cliente
+        en forma de mensaje `fin`."""
+
+    async def cerrar(self) -> None:
+        """La conexión se ha ido. Última oportunidad de vaciar lo pendiente."""
+
+
+# ---------------------------------------------------------------------------
 # Modelo del reproductor del navegador
 # ---------------------------------------------------------------------------
 class ReproductorSimulado:
@@ -276,6 +328,7 @@ class SesionVoz:
         stt: Any | None = None,
         motor_tts: TTSEngine | None = None,
         llm: LLMClient | None = None,
+        llamada: LlamadaEnCurso | None = None,
         params_vad: ParametrosVAD | None = None,
         sistema: str = "",
     ) -> None:
@@ -290,6 +343,11 @@ class SesionVoz:
         self._motor_propio = motor_tts is None
         self._motor = motor_tts or crear_motor(get_settings().tts_engine_local)
         self._llm = llm or ClienteLLMFalso()
+        # Sin `llamada` esto es una sesión suelta: se habla, se mide y no se
+        # persiste nada. Es el modo del arnés de medición y el de
+        # `scripts/spikes/cliente_voz/`, y tiene que seguir funcionando sin base
+        # de datos ni agente clínico detrás.
+        self._llamada = llamada
         self._sistema = sistema
         self.vad = DetectorTurnos(params_vad)
 
@@ -320,6 +378,19 @@ class SesionVoz:
         self._muestras_en_ventana = 0
         self._ritmo_denunciado = False
 
+        self._agente_sonaba = False
+        """Si el agente estaba sonando la última vez que se miró.
+
+        Existe solo para emitir `estado: escuchando` en el instante en que deja
+        de sonar. Sin él la pantalla se quedaría en «Hablando» hasta que el
+        paciente abriera la boca, que es justo cuando alguien mira el indicador
+        para saber si le toca hablar."""
+
+        self.terminada = False
+        """La llamada ha terminado por decisión del agente clínico (bandera roja
+        confirmada, guion completado). Deja de aceptarse audio y el endpoint
+        cierra el WebSocket."""
+
         self.turnos: list[MetricasTurno] = []
         self.barge_ins: list[MetricasBargeIn] = []
         self.reproductor: ReproductorSimulado | None = None
@@ -332,6 +403,13 @@ class SesionVoz:
         frontera con el navegador y con cualquiera que abra el WebSocket: todo lo
         que entre por aquí es de fuera y puede venir mal.
         """
+        if self.terminada:
+            # La llamada ya se cerró (bandera roja confirmada, o guion acabado).
+            # El navegador tarda un momento en soltar el micrófono y lo que
+            # llegue en ese hueco no puede abrir un turno nuevo: sería el agente
+            # respondiendo después de despedirse.
+            return
+
         t_llegada = time.perf_counter()
 
         if impares := len(pcm16) % 2:
@@ -363,6 +441,9 @@ class SesionVoz:
         # es lo único que corre continuamente; un temporizador aparte habría que
         # cancelarlo en cada barge-in.
         if not self.agente_hablando:
+            if self._agente_sonaba:
+                self._agente_sonaba = False
+                await self._enviar_evento({"tipo": "estado", "fase": "escuchando"})
             self.vad.agente_deja_de_hablar()
 
         if not self.vad.hablando:
@@ -432,6 +513,11 @@ class SesionVoz:
         # que la corrección es exacta y no una estimación.
         retraso_ms = self.vad.ms_stream - ms_inicio
         self._t_voz_paciente = t - retraso_ms / 1000
+        # `estado` es el mensaje del contrato de llamadas; `paciente_habla` es el
+        # del bucle de voz, que la página de pruebas y el frontend ya manejan. Se
+        # mandan los dos: son el mismo hecho contado a dos clientes distintos, y
+        # retirar el viejo rompería `scripts/spikes/cliente_voz/` sin avisar.
+        await self._enviar_evento({"tipo": "estado", "fase": "escuchando"})
         await self._enviar_evento({"tipo": "paciente_habla"})
 
         if self.agente_hablando:
@@ -467,6 +553,7 @@ class SesionVoz:
         self._buffer.clear()
         self._buffer_desde = self._muestras_recibidas
 
+        await self._enviar_evento({"tipo": "estado", "fase": "pensando"})
         await self._enviar_evento({"tipo": "fin_de_turno"})
         await self._cancelar_turno()
         self._tarea = asyncio.create_task(self._responder(segmento, t_fin_voz, t))
@@ -516,9 +603,25 @@ class SesionVoz:
                 ruta.unlink(missing_ok=True)
             m.stt_ms = trans.duracion_ms
             m.texto_paciente = trans.texto
-            await self._enviar_evento({"tipo": "transcripcion", "texto": trans.texto})
+            # `quien` y `parcial` los pide el contrato de llamadas. Aquí valen
+            # siempre lo mismo —el STT solo transcribe al paciente, y este
+            # pipeline no emite parciales— pero se mandan explícitos: que el
+            # cliente tenga que suponer quién habló es como se acaba pintando la
+            # frase del paciente en el lado del agente.
+            await self._enviar_evento(
+                {"tipo": "transcripcion", "quien": "paciente",
+                 "texto": trans.texto, "parcial": False}
+            )
 
             await self._hablar(m, trans.texto, t_fin_voz)
+
+            # Fin de turno: aquí están medidas TODAS las etapas y ya ha salido el
+            # audio, así que publicar las latencias no le cuesta nada al
+            # paciente. Se emite en el camino de éxito y no en el `finally`
+            # porque un turno cortado por barge-in no tiene latencias que
+            # significar: el agente no llegó a decir lo que iba a decir.
+            await self._enviar_evento({"tipo": "metricas", "ms": _ms_del_turno(m)})
+            await self._comprobar_fin()
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -537,6 +640,18 @@ class SesionVoz:
             log.exception("el turno de voz falló; la llamada continúa")
         finally:
             self.turnos.append(m)
+            # También para un turno cortado o fallado: ocurrió, y la
+            # transcripción que se le enseña al equipo clínico tiene que
+            # contarlo. Es síncrono a propósito —ver `LlamadaEnCurso`— porque
+            # este `finally` corre a veces bajo cancelación, donde un `await` no
+            # es seguro.
+            if self._llamada is not None:
+                try:
+                    self._llamada.turno_terminado(m)
+                except Exception:
+                    # Perder el registro es malo; cortar una llamada clínica por
+                    # no poder registrarla es peor.
+                    log.exception("no se pudo registrar el turno; la llamada continúa")
 
     async def _hablar(self, m: MetricasTurno, texto_usuario: str, t_fin_voz: float) -> None:
         """Streaming LLM → troceado por frases → síntesis → emisión.
@@ -548,7 +663,6 @@ class SesionVoz:
         t_llm = time.perf_counter()
         pendiente = ""
         primera = True
-        emitidas: list[str] = []
 
         async for trozo in self._llm.stream(self._sistema, [Mensaje("user", texto_usuario)]):
             if primera:
@@ -562,7 +676,6 @@ class SesionVoz:
             if len(frases) > 1:
                 for frase in frases[:-1]:
                     await self._emitir(m, frase, t_fin_voz)
-                    emitidas.append(frase)
                 # El resto se recorta del texto CRUDO, no del troceado: los
                 # trozos vienen con `strip()` aplicado, y reasignar `pendiente`
                 # desde ellos se come el espacio del final. El síntoma es
@@ -586,9 +699,7 @@ class SesionVoz:
 
         if resto := pendiente.strip():
             await self._emitir(m, resto, t_fin_voz)
-            emitidas.append(resto)
 
-        m.texto_agente = " ".join(emitidas)
         # OJO: aquí NO se apaga `agente_hablando`. Se ha terminado de *emitir*,
         # pero el cliente sigue reproduciendo lo encolado, y durante ese rato el
         # paciente todavía puede —y suele— interrumpir. Lo apaga `recibir_audio`
@@ -604,7 +715,22 @@ class SesionVoz:
 
         if not self.agente_hablando:
             self.vad.agente_empieza_a_hablar()
-            await self._enviar_evento({"tipo": "agente_habla", "texto": frase})
+            self._agente_sonaba = True
+            await self._enviar_evento({"tipo": "estado", "fase": "hablando"})
+
+        # El texto dicho se acumula AQUÍ, frase a frase, por dos motivos:
+        #
+        # 1. Un turno cortado por barge-in deja escrito lo que el agente sí llegó
+        #    a decir. Con la asignación única al final de `_hablar`, una
+        #    interrupción borraba del registro medio párrafo que el paciente
+        #    había oído perfectamente.
+        # 2. `agente_habla` se manda ACUMULADO y no frase suelta. El cliente
+        #    trata una intervención parcial sustituyéndola, no concatenándola
+        #    —es lo correcto para un STT que revisa lo que ya dijo—, así que
+        #    mandar frases sueltas haría que la transcripción en vivo del agente
+        #    parpadeara mostrando solo la última.
+        m.texto_agente = f"{m.texto_agente} {frase}".strip()
+        await self._enviar_evento({"tipo": "agente_habla", "texto": m.texto_agente})
 
         pcm16 = (np.clip(audio.pcm, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
         por_trozo = int(audio.sample_rate * MS_TROZO_SALIDA / 1000) * 2
@@ -622,15 +748,86 @@ class SesionVoz:
             # no habría barge-in posible.
             await asyncio.sleep(0)
 
+    # -- apertura -----------------------------------------------------------
+    def saludar(self, texto: str) -> None:
+        """Dice la primera frase sin que nadie haya preguntado.
+
+        Va como tarea cancelable, igual que un turno, y por el mismo motivo: el
+        saludo del AI Act dura unos ocho segundos y quien descuelga un teléfono
+        dice «¿sí?» encima casi siempre. Si esto no fuera interrumpible, la
+        primera experiencia de la llamada sería el agente hablando por encima del
+        paciente.
+
+        No espera a que suene: devuelve en cuanto la tarea está creada, para que
+        el endpoint pueda ponerse a recibir audio de inmediato.
+        """
+        self._tarea = asyncio.create_task(self._decir(texto))
+
+    async def _decir(self, texto: str) -> None:
+        m = MetricasTurno()
+        t0 = time.perf_counter()
+        try:
+            for frase in dividir_en_frases(texto) or [texto]:
+                await self._emitir(m, frase, t0)
+            await self._enviar_evento({"tipo": "fin_audio", "texto": m.texto_agente})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # El saludo no puede llevarse la llamada: sin él la conversación
+            # sigue siendo posible, el paciente simplemente empieza a hablar.
+            log.exception("no se pudo decir el saludo de apertura")
+
+    # -- fin ----------------------------------------------------------------
+    async def _comprobar_fin(self) -> None:
+        """¿Ha decidido el agente clínico que la llamada termina aquí?
+
+        Se pregunta al cerrar cada turno, que es cuando el agente acaba de
+        decidirlo y cuando el audio de su despedida ya ha salido. Preguntarlo
+        antes cortaría la llamada a mitad de la frase que la cierra.
+        """
+        if self._llamada is None:
+            return
+        motivo = self._llamada.motivo_de_fin()
+        if motivo is None:
+            return
+        self.terminada = True
+        await self._enviar_evento({"tipo": "fin", "motivo": motivo})
+
     # -- cierre -------------------------------------------------------------
     async def cerrar(self) -> None:
         await self._cancelar_turno()
+        if self._llamada is not None:
+            # Antes que el motor de TTS: aquí es donde se vacía lo que quede
+            # pendiente de escribir en la base, y hacerlo después de cerrar el
+            # motor no cambia nada salvo el orden en que fallaría.
+            await self._llamada.cerrar()
         if self._motor_propio:
             await self._motor.cerrar()
 
 
 async def _sin_eventos(_: dict) -> None:
     return None
+
+
+def _ms_del_turno(m: MetricasTurno) -> dict[str, int]:
+    """`MetricasTurno` traducida a las etapas que publica el contrato.
+
+    Los nombres internos son más precisos que los del contrato —`llm_ttft_ms` no
+    es «el LLM», es el tiempo hasta su primer token— pero el panel de la pantalla
+    está construido sobre `stt`, `retrieval`, `llm` y `tts`, y esta función es el
+    único sitio donde se hace la traducción. `retrieval` no aparece a propósito:
+    el pipeline de voz no mide el RAG, lo mide el agente por dentro, y publicar
+    un cero ahí diría «la búsqueda tardó 0 ms» en vez de «esto no lo mido yo».
+
+    `total` es `primer_audio_ms`: lo que el paciente percibe como «tarda en
+    contestar», que es la única cifra de todas estas que él nota.
+    """
+    return {
+        "stt": round(m.stt_ms),
+        "llm": round(m.llm_ttft_ms),
+        "tts": round(m.tts_primera_frase_ms),
+        "total": round(m.primer_audio_ms),
+    }
 
 
 def _wav_temporal(pcm16: bytes, sample_rate: int) -> Path:
@@ -662,11 +859,15 @@ class _Conexion:
         await self.ws.send_json(datos)
 
 
+FabricaLlamada = Callable[[str, EnviarEvento], Awaitable["LlamadaEnCurso | None"]]
+
+
 def crear_router(
     *,
     stt: Any | None = None,
     motor_tts: TTSEngine | None = None,
     llm: LLMClient | None = None,
+    fabrica_llamada: FabricaLlamada | None = None,
     params_vad: ParametrosVAD | None = None,
     sistema: str = "",
 ):
@@ -676,6 +877,22 @@ def crear_router(
     inyectarle dobles en las pruebas. `app/main.py` es de otro agente: la
     anotación para que lo monte está en `docs/CONTRATO_API.md` §Cambios sobre el
     contrato.
+
+    ── `llm` contra `fabrica_llamada` ──────────────────────────────────────
+    Son los dos modos del endpoint y la diferencia es el estado por llamada:
+
+    - `llm=` es **un** cliente compartido por todas las conexiones. Vale para lo
+      que no tiene memoria: `ClienteLLMFalso`, el arnés de medición, la página
+      de pruebas con micrófono.
+    - `fabrica_llamada=` se invoca **una vez por conexión** con el `call_id` de
+      la query, y devuelve el agente clínico de ESA llamada. Hace falta porque
+      el agente guarda el historial y la fase de la llamada en memoria (§Cambios
+      punto 6 del contrato): compartir una instancia entre dos llamadas
+      simultáneas mezclaría las dos conversaciones en el mismo historial y le
+      contaría a un paciente lo que dijo el otro.
+
+    Sin `call_id` en la query no se llama a la fábrica y la sesión cae a `llm`:
+    es la «sesión suelta sin persistir» que el contrato describe.
 
     El STT y el motor de TTS se crean **una vez aquí**, no por conexión, por dos
     razones: cargar Kokoro o Whisper en el `accept()` del WebSocket añadiría
@@ -699,22 +916,56 @@ def crear_router(
     router = APIRouter()
 
     @router.websocket("/ws/voz")
-    async def voz(ws: WebSocket) -> None:
+    async def voz(ws: WebSocket, call_id: str | None = None) -> None:
         await ws.accept()
         conexion = _Conexion(ws)
+        await ws.send_json({"tipo": "listo", "sample_rate_entrada": STT_SAMPLE_RATE,
+                            "sample_rate_salida": TTS_SAMPLE_RATE})
+
+        llamada: LlamadaEnCurso | None = None
+        if call_id:
+            if fabrica_llamada is None:
+                log.warning(
+                    "llega ?call_id=%s pero el router se montó sin fabrica_llamada: "
+                    "la sesión no se va a persistir", call_id,
+                )
+            else:
+                try:
+                    llamada = await fabrica_llamada(call_id, conexion.evento)
+                except Exception:
+                    log.exception("no se pudo abrir la sesión clínica de %s", call_id)
+
+            if llamada is None:
+                # Ruidoso a propósito. El caso real es un backend reiniciado a
+                # mitad de llamada (§Cambios punto 6): el agente vivía en memoria
+                # y ya no está. Seguir con `ClienteLLMFalso` dejaría una llamada
+                # que suena bien, no guarda ni un turno y no se parece en nada a
+                # lo que la pantalla dice que está pasando — el fallo silencioso
+                # que este proyecto lleva evitando desde la Fase 1. Se cierra
+                # diciendo por qué.
+                await ws.send_json({"tipo": "fin", "motivo": "cortada"})
+                await ws.close()
+                return
+
         sesion = SesionVoz(
             enviar_audio=conexion.audio,
             enviar_evento=conexion.evento,
             stt=stt,
             motor_tts=motor_tts,
-            llm=llm,
+            # El mismo objeto entra por las dos puertas: es a la vez quien
+            # responde (`LLMClient`) y quien lleva la cuenta de la llamada
+            # (`LlamadaEnCurso`). Separarlo en dos parámetros es lo que permite
+            # que `SesionVoz` siga sin saber que la Fase 4 existe.
+            llm=llamada or llm,
+            llamada=llamada,
             params_vad=params_vad,
             sistema=sistema,
         )
-        await ws.send_json({"tipo": "listo", "sample_rate_entrada": STT_SAMPLE_RATE,
-                            "sample_rate_salida": TTS_SAMPLE_RATE})
+        if llamada is not None and (saludo := llamada.saludo_inicial()):
+            sesion.saludar(saludo)
+
         try:
-            while True:
+            while not sesion.terminada:
                 mensaje = await ws.receive()
                 if (datos := mensaje.get("bytes")) is not None:
                     await sesion.recibir_audio(datos)
