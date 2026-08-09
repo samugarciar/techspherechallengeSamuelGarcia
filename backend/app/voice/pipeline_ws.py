@@ -32,7 +32,7 @@ justo lo que hay que ahorrar en el camino de voz.
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import logging
 import tempfile
 import time
 import wave
@@ -51,6 +51,8 @@ from app.voice.tts import TTSEngine, crear_motor, dividir_en_frases
 from app.voice.vad import SAMPLE_RATE as STT_SAMPLE_RATE
 from app.voice.vad import DetectorTurnos, Evento, ParametrosVAD
 
+log = logging.getLogger("voz.pipeline")
+
 MS_TROZO_SALIDA = 20
 """Tamaño del trozo de audio que se manda al navegador. 20 ms es el estándar de
 facto en voz en tiempo real (Opus, WebRTC): más pequeño multiplica los mensajes
@@ -64,6 +66,31 @@ El VAD confirma la voz 96 ms tarde por diseño, y Whisper sin el ataque de la
 primera sílaba se come palabras cortas («sí», «no»), que en un seguimiento
 clínico son las respuestas más frecuentes. 300 ms cubre la confirmación con
 margen y cuesta 9,6 kB de buffer."""
+
+MS_TURNO_MAXIMO = 60_000
+"""Techo del buffer de un turno, en ms de audio.
+
+`_recortar_a_preroll()` solo recorta mientras el paciente NO habla —hay que
+conservar el turno entero para Whisper—, así que sin este tope el buffer crece a
+32 kB/s durante todo el tiempo que el VAD siga viendo voz. Un micrófono abierto
+en una sala con gente no genera nunca los 640 ms de silencio que cierran el
+turno, y el buffer no para.
+
+Lo caro no es la RAM. Es que cuando por fin llegue el silencio, ese buffer entero
+se escribe a un WAV y se le pasa a Whisper: un turno de diez minutos son varios
+minutos de transcripción de algo que ya no le importa a nadie. Con el tope se
+descarta lo más viejo y se conserva el último minuto, que es lo que el paciente
+acaba de decir y por tanto lo único que hay que contestar.
+
+No se fuerza un fin de turno artificial al llegar al tope: eso haría al agente
+interrumpir a un paciente que está contando algo largo, que es justo el error que
+`ms_silencio_fin_turno` está calibrado para no cometer."""
+
+MS_VENTANA_RITMO = 4_000
+"""Cuánto audio hay que acumular antes de opinar sobre la frecuencia de muestreo.
+
+Menos que esto y el arranque del micrófono —que suele entregar un lote de golpe—
+daría falsos positivos."""
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +169,14 @@ class MetricasTurno:
 
     texto_paciente: str = ""
     texto_agente: str = ""
+
+    error: str | None = None
+    """Por qué se quedó a medias este turno, si se quedó.
+
+    Existe porque un turno fallido es invisible de otro modo: corre dentro de una
+    `asyncio.Task` y su excepción no llega a ningún sitio hasta que alguien hace
+    `await` sobre la tarea. Con esto, quien inspeccione `sesion.turnos` —una
+    prueba, o el panel de trazas de la Fase 6— ve el hueco y el motivo."""
 
     @property
     def primer_audio_desde_deteccion_ms(self) -> float:
@@ -280,17 +315,42 @@ class SesionVoz:
 
         self._t_voz_paciente = 0.0    # perf_counter del inicio real del turno actual
 
+        # Vigilancia de la frecuencia de muestreo del cliente. Ver `_vigilar_ritmo`.
+        self._t_primer_audio = 0.0
+        self._muestras_en_ventana = 0
+        self._ritmo_denunciado = False
+
         self.turnos: list[MetricasTurno] = []
         self.barge_ins: list[MetricasBargeIn] = []
         self.reproductor: ReproductorSimulado | None = None
 
     # -- entrada de audio ---------------------------------------------------
     async def recibir_audio(self, pcm16: bytes) -> None:
-        """Punto de entrada único. `pcm16` es int16 LE mono a 16 kHz."""
+        """Punto de entrada único. `pcm16` es int16 LE mono a 16 kHz.
+
+        Lo primero que hace es desconfiar de lo que llega. Este método es la
+        frontera con el navegador y con cualquiera que abra el WebSocket: todo lo
+        que entre por aquí es de fuera y puede venir mal.
+        """
         t_llegada = time.perf_counter()
+
+        if impares := len(pcm16) % 2:
+            # int16 LE: una longitud impar es medio sample. `np.frombuffer` lanza
+            # `ValueError` con ella y —peor— el byte suelto ya habría entrado en
+            # `_buffer`, dejando TODO lo que venga detrás desplazado un byte, o
+            # sea ruido blanco a partir de ahí. Se tira el byte y se sigue: un
+            # trozo partido por el transporte no puede costar la llamada.
+            log.warning("trozo de audio de longitud impar (%d bytes); se descarta el sobrante",
+                        len(pcm16))
+            pcm16 = pcm16[:-impares]
+        if not pcm16:
+            return
+
+        self._vigilar_ritmo(len(pcm16) // 2, t_llegada)
         self._buffer += pcm16
         muestras = len(pcm16) // 2
         self._muestras_recibidas += muestras
+        self._recortar_al_maximo()
 
         for ev in self.vad.procesar_pcm16(pcm16):
             if ev.tipo is Evento.EMPEZO_A_HABLAR:
@@ -313,11 +373,57 @@ class SesionVoz:
         return time.perf_counter() < self._suena_hasta
 
     def _recortar_a_preroll(self) -> None:
-        maximo = int(MS_PREROLL * STT_SAMPLE_RATE / 1000) * 2
+        self._recortar_a(MS_PREROLL)
+
+    def _recortar_al_maximo(self) -> None:
+        """Techo duro del buffer, se esté hablando o no. Ver `MS_TURNO_MAXIMO`."""
+        self._recortar_a(MS_TURNO_MAXIMO)
+
+    def _recortar_a(self, ms: float) -> None:
+        maximo = int(ms * STT_SAMPLE_RATE / 1000) * 2
         if len(self._buffer) > maximo:
             sobra = len(self._buffer) - maximo
             del self._buffer[:sobra]
             self._buffer_desde += sobra // 2
+
+    def _vigilar_ritmo(self, muestras: int, ahora: float) -> None:
+        """Denuncia en el log a un cliente que no manda a 16 kHz.
+
+        Es el fallo más desconcertante que puede tener este endpoint porque no
+        rompe nada: si el navegador manda 48 kHz sin remuestrear —un
+        `AudioContext` sin `sampleRate` fijado hace exactamente eso—, el VAD ve
+        el triple de audio del que hay, los umbrales de 96 y 640 ms se cumplen en
+        un tercio del tiempo real, y Whisper transcribe una grabación acelerada.
+        No hay excepción, no hay error, y el síntoma que le llega a Samuel es «el
+        agente no me entiende».
+
+        No se remuestrea ni se rechaza a propósito: el servidor no sabe si el
+        exceso es la frecuencia o una ráfaga de audio grabado (los tests inyectan
+        turnos enteros de golpe, y eso es legítimo). Lo que sí puede hacer, y
+        vale más que cualquier heurística, es dejarlo dicho una vez.
+        """
+        if self._ritmo_denunciado:
+            return
+        if self._t_primer_audio == 0.0:
+            self._t_primer_audio = ahora
+            return
+
+        self._muestras_en_ventana += muestras
+        transcurrido = ahora - self._t_primer_audio
+        if self._muestras_en_ventana * 1000 / STT_SAMPLE_RATE < MS_VENTANA_RITMO:
+            return
+
+        ritmo = self._muestras_en_ventana / transcurrido if transcurrido > 0 else 0.0
+        self._ritmo_denunciado = True
+        # x1.5 y no x1.1: hay que distinguir «otra frecuencia» (x3 con 48 kHz,
+        # x1.5 con 24 kHz) de «el cliente va un poco adelantado», que es normal.
+        if ritmo > STT_SAMPLE_RATE * 1.5:
+            log.warning(
+                "el cliente parece mandar audio a otra frecuencia de muestreo: "
+                "%.0f muestras/s recibidas frente a las %d acordadas. "
+                "El VAD y Whisper darán resultados sin sentido.",
+                ritmo, STT_SAMPLE_RATE,
+            )
 
     # -- transiciones -------------------------------------------------------
     async def _empezo_a_hablar(self, ms_inicio: float, ms_decision: float, t: float) -> None:
@@ -366,12 +472,35 @@ class SesionVoz:
         self._tarea = asyncio.create_task(self._responder(segmento, t_fin_voz, t))
 
     async def _cancelar_turno(self) -> None:
-        if self._tarea is None:
+        """Cancela el turno en vuelo y **recoge** su resultado.
+
+        Lo segundo es la parte que faltaba y costaba la llamada entera. Si la
+        tarea ya había terminado con una excepción —Whisper caído, el motor de
+        TTS sin modelo, el cliente que se fue a media síntesis y `send_bytes`
+        falló—, `cancel()` no hace nada y el `await` la RELANZA aquí. Aquí es:
+        dentro de `_dejo_de_hablar`, o sea en el turno siguiente, o dentro de
+        `cerrar()`, o sea en el `finally` del endpoint. En los dos casos el error
+        salía a kilómetros de donde ocurrió, mataba el WebSocket y —desde
+        `cerrar()`— se saltaba el cierre del motor de TTS, dejando un cliente
+        HTTP colgando por cada llamada que terminara mal.
+
+        Recoger no es tragar: `_responder` ya la registró en el log y en
+        `MetricasTurno.error` antes de que llegara hasta aquí.
+        """
+        tarea, self._tarea = self._tarea, None
+        if tarea is None:
             return
-        self._tarea.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._tarea
-        self._tarea = None
+        tarea.cancel()
+        try:
+            await tarea
+        except asyncio.CancelledError:
+            # Solo se absorbe la cancelación de ESA tarea. Si la cancelada es
+            # esta corrutina (el endpoint cerrándose), hay que dejarla pasar o el
+            # cierre se queda a medias.
+            if not tarea.cancelled():
+                raise
+        except Exception:
+            log.debug("el turno cancelado ya venía fallado", exc_info=True)
 
     # -- el turno -----------------------------------------------------------
     async def _responder(self, segmento: bytes, t_fin_voz: float, t_decision: float) -> None:
@@ -392,6 +521,20 @@ class SesionVoz:
             await self._hablar(m, trans.texto, t_fin_voz)
         except asyncio.CancelledError:
             raise
+        except Exception as e:
+            # Un turno que revienta NO puede llevarse la llamada. Antes la
+            # excepción se quedaba dormida dentro de la tarea, sin log ni rastro,
+            # hasta que `_cancelar_turno` la despertaba en el turno siguiente.
+            # Aquí muere: se registra con traza para el administrador y se anota
+            # en la métrica para quien inspeccione la sesión.
+            #
+            # Se descartó avisar al cliente con un mensaje de control nuevo: los
+            # siete tipos de `/ws/voz` están fijados en el contrato y en la página
+            # de prueba, y añadir un octavo que nadie maneja no arregla nada. Lo
+            # que el paciente percibe —el agente no contesta a esa pregunta— ya
+            # está cubierto por el turno siguiente, que ahora sí funciona.
+            m.error = f"{type(e).__name__}: {e}"
+            log.exception("el turno de voz falló; la llamada continúa")
         finally:
             self.turnos.append(m)
 
@@ -427,7 +570,19 @@ class SesionVoz:
                 # justo en un espacio, que ocurre continuamente.
                 cola = frases[-1]
                 corte = pendiente.rfind(cola)
-                pendiente = pendiente[corte:] if corte >= 0 else cola
+                if corte >= 0:
+                    pendiente = pendiente[corte:]
+                else:
+                    # `dividir_en_frases` fusiona las muletillas con un espacio
+                    # SIMPLE, así que la cola deja de ser un substring literal en
+                    # cuanto el LLM escribió un salto de línea ahí — y un LLM
+                    # escribe saltos de línea a todas horas. Por ese camino de
+                    # respaldo volvía el mismo bug que el `rfind` evita: `cola`
+                    # está `strip()`eada y el trozo siguiente se pegaba a ella
+                    # («Bien.Muchas gracias», que el TTS pronuncia como una sola
+                    # palabra). Se le devuelve el blanco final del texto crudo,
+                    # que es lo único que se había perdido.
+                    pendiente = cola + pendiente[len(pendiente.rstrip()):]
 
         if resto := pendiente.strip():
             await self._emitir(m, resto, t_fin_voz)

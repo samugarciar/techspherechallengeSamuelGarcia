@@ -36,6 +36,20 @@ async def _cambiar_estado(document_id, estado: str, embebidos: int = 0) -> None:
         )
 
 
+async def _promover_con_paginas(document_id, paginas: int) -> None:
+    """Lo que hace el worker al terminar: `ready`, contadores y número de páginas.
+
+    `pages` solo lo conoce el parser, así que se escribe aquí y no antes (ver
+    docs/CONTRATO_API.md §Cambios sobre el contrato, punto 1).
+    """
+    async with connection() as conn:
+        await conn.execute(
+            "UPDATE documents SET status = 'ready', chunks_count = %s, "
+            "embedded_count = %s, pages = %s WHERE id = %s",
+            (12, 12, paginas, document_id),
+        )
+
+
 async def test_instantanea_inicial(bd):
     document_id = await insertar_documento(estado="uploaded")
 
@@ -50,6 +64,7 @@ async def test_instantanea_inicial(bd):
             "status": "uploaded",
             "chunks_count": 0,
             "embedded_count": 0,
+            "pages": None,
             "error": None,
         }
         assert evento["id"], "cada evento lleva marca de tiempo para la reconexión"
@@ -71,6 +86,33 @@ async def test_se_ve_avanzar_el_estado_y_los_contadores(bd):
         evento = await sse.esperar_evento("documento")
         assert evento["data"]["status"] == "ready"
         assert evento["data"]["embedded_count"] == 24
+
+
+async def test_el_evento_trae_las_paginas(bd):
+    """`pages` viajaba solo en `GET /api/documents`, nunca por el flujo.
+
+    La consola pinta una columna «Páginas» y la rellena fusionando el evento
+    sobre la fila que ya tiene (`useDocumentos.aplicarEvento` lee `evento.pages`).
+    Como el evento no lo traía, todo PDF ingerido durante la demo se quedaba con
+    un «—» en esa columna hasta que alguien pulsara «Recargar» — y solo se
+    notaba con el jurado delante, porque el mock del frontend SÍ lo manda y con
+    `VITE_MOCK=1` la columna se rellena sola.
+
+    Es el único dato del `Documento` que cambia durante la ingesta y no estaba
+    en el evento; el resto (`filename`, `size_bytes`, `sha256`) se fija al subir
+    y la consola ya lo tiene desde el 202.
+    """
+    document_id = await insertar_documento(estado="chunking")
+
+    async with ClienteSSE(_ruta()) as sse:
+        primero = await sse.esperar_evento("documento")
+        assert primero["data"]["pages"] is None
+
+        await _promover_con_paginas(document_id, 6)
+
+        evento = await sse.esperar_evento("documento")
+        assert evento["data"]["status"] == "ready"
+        assert evento["data"]["pages"] == 6
 
 
 async def test_el_borrado_emite_eliminado(bd, cliente, cabeceras):
@@ -157,6 +199,27 @@ async def test_varios_flujos_a_la_vez_no_agotan_el_pool(bd):
         await f.cerrar()
     assert eventos.flujos_abiertos() == 0
     assert conexiones_en_uso() == 0
+
+
+async def test_llega_el_latido(bd, monkeypatch):
+    """El contrato promete un `latido` cada 15 s y nada lo comprobaba.
+
+    Importa por el otro lado del cable: `frontend/src/api/flujo.ts` monta un
+    vigilante que fuerza la reconexión si pasan 45 s sin recibir NADA. Un flujo
+    correcto pero callado —que es lo normal: entre subida y subida no pasa nada—
+    se reconectaría en bucle cada 45 s si el latido no saliera.
+
+    `ping` se lee de `LATIDO_S` en cada petición, así que se puede acortar sin
+    tocar el módulo. 15 s de espera real en la batería no los paga nadie.
+    """
+    await insertar_documento(estado="uploaded")
+    monkeypatch.setattr(eventos, "LATIDO_S", 1)
+
+    async with ClienteSSE(_ruta()) as sse:
+        await sse.esperar_evento("documento")
+        latido = await sse.esperar_evento("latido", timeout=6)
+        assert latido["data"] == {}
+        assert latido["id"], "el latido lleva marca de tiempo para acortar la reanudación"
 
 
 async def test_marca_corrupta_degrada_a_instantanea(bd):

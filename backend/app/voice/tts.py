@@ -22,6 +22,7 @@ import asyncio
 import re
 import subprocess
 import tempfile
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -147,12 +148,21 @@ class KokoroTTS(TTSEngine):
     def __init__(self, voz: str) -> None:
         self.voz = voz
         self._pipe = None
+        # `sintetizar` va a un hilo con `asyncio.to_thread`, así que dos llamadas
+        # de voz simultáneas ejecutan `_cargar()` en paralelo de verdad. Sin
+        # cerrojo las dos ven `_pipe is None` y construyen un KPipeline cada una:
+        # dos copias de Kokoro-82M en una máquina de 16 GB que ya sostiene
+        # Whisper, bge-m3 y el reranker. La segunda además se descarta al asignar.
+        self._cerrojo = threading.Lock()
 
     def _cargar(self):
-        if self._pipe is None:
-            from kokoro import KPipeline
+        if self._pipe is not None:
+            return self._pipe
+        with self._cerrojo:
+            if self._pipe is None:
+                from kokoro import KPipeline
 
-            self._pipe = KPipeline(lang_code="e", repo_id="hexgrad/Kokoro-82M")
+                self._pipe = KPipeline(lang_code="e", repo_id="hexgrad/Kokoro-82M")
         return self._pipe
 
     def _sync(self, texto: str) -> Audio:

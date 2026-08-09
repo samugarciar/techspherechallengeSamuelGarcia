@@ -1,0 +1,124 @@
+/* Animaciones propias de la pantalla de llamada.
+   Van en su propio fichero, y no en `index.css`, para no tocar la hoja de la
+   consola de documentos: esta pantalla se carga con la ruta y se lleva sus
+   estilos consigo.
+
+   El criterio de todas ellas: llamar la atención UNA vez y luego apartarse. Un
+   parpadeo perpetuo en un producto médico deja de leerse a los treinta segundos
+   y encima estorba a quien está escuchando la llamada. */
+
+/* Bandera roja. Tres pulsos y se queda quieta: lo bastante para que alguien que
+   estaba mirando otra cosa gire la cabeza, no tanto como para parecer una
+   máquina tragaperras. */
+@keyframes alarma-aparece {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes alarma-pulso {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--rojo) 0%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklab, var(--rojo) 22%, transparent);
+  }
+}
+
+.alarma {
+  animation:
+    alarma-aparece 0.28s ease-out,
+    alarma-pulso 1.15s ease-in-out 3;
+}
+
+/* Franja superior de la pantalla mientras la llamada está escalada. Es el
+   cambio inequívoco que se ve desde el fondo de la sala. */
+@keyframes barra-alarma {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.barra-alarma {
+  transform-origin: left;
+  animation: barra-alarma 0.45s ease-out;
+}
+
+/* Respiración del indicador de fase mientras el agente escucha. Marca que el
+   sistema está vivo aunque nadie hable. */
+@keyframes respirar {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+.respirando {
+  animation: respirar 1.9s ease-in-out infinite;
+}
+
+/* Los tres puntos del «pensando». Un spinner diría «cargando»; esto dice que
+   hay alguien al otro lado componiendo una frase. */
+@keyframes puntito {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.puntito {
+  animation: puntito 1.25s ease-in-out infinite;
+}
+
+.puntito:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.puntito:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+/* Cursor de la transcripción parcial: lo que el STT todavía puede corregir. */
+@keyframes cursor-parcial {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+
+.cursor-parcial {
+  animation: cursor-parcial 1s steps(2, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alarma,
+  .barra-alarma,
+  .respirando,
+  .puntito,
+  .cursor-parcial {
+    animation: none;
+  }
+}

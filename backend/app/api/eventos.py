@@ -72,7 +72,8 @@ def flujos_abiertos() -> int:
 
 _SQL_ESTADO = """
 SELECT t.ahora,
-       d.id, d.status, d.chunks_count, d.embedded_count, d.error_message, d.updated_at
+       d.id, d.status, d.chunks_count, d.embedded_count, d.pages,
+       d.error_message, d.updated_at
 FROM (SELECT now() AS ahora) t
 LEFT JOIN documents d ON true
 """
@@ -99,17 +100,27 @@ def _instante(texto: str | None) -> datetime | None:
 def _visible(fila: dict[str, Any]) -> tuple:
     """Los campos que el cliente ve. La comparación se hace sobre esto y no
     sobre `updated_at`: así un UPDATE que no cambia nada observable no genera
-    un evento, y la consola no parpadea sin motivo."""
+    un evento, y la consola no parpadea sin motivo.
+
+    `pages` está aquí porque es el ÚNICO campo del `Documento` que cambia durante
+    la ingesta y no se conoce al subir: lo escribe el worker al promover a
+    `ready`, cuando el parser ya ha abierto el PDF. Sin él, la columna «Páginas»
+    de la consola se quedaba en «—» para todo lo que se ingiriera en vivo hasta
+    que alguien recargara. El resto de campos —`filename`, `size_bytes`,
+    `sha256`, `title`— se fijan en el 202 de la subida y la consola ya los tiene,
+    así que mandarlos en cada sondeo sería tráfico sin información.
+    """
     return (
         fila["status"],
         fila["chunks_count"],
         fila["embedded_count"],
+        fila["pages"],
         fila["error_message"],
     )
 
 
 def _evento(document_id: str, estado: tuple, marca: str) -> ServerSentEvent:
-    status, chunks, embebidos, error = estado
+    status, chunks, embebidos, paginas, error = estado
     # JSONServerSentEvent y no ServerSentEvent: éste último serializa con
     # str(dict), que produce comillas simples y `None` — repr de Python, no JSON.
     # El navegador haría JSON.parse y fallaría en cada evento.
@@ -121,6 +132,7 @@ def _evento(document_id: str, estado: tuple, marca: str) -> ServerSentEvent:
             "status": status,
             "chunks_count": chunks,
             "embedded_count": embebidos,
+            "pages": paginas,
             "error": error,
         },
     )
@@ -146,7 +158,7 @@ async def _cambios_desde(desde: datetime) -> tuple[list[dict], list[str]]:
     async with connection() as conn:
         cur = await conn.execute(
             """
-            SELECT id, status, chunks_count, embedded_count, error_message
+            SELECT id, status, chunks_count, embedded_count, pages, error_message
             FROM documents WHERE updated_at >= %s
             """,
             (desde,),

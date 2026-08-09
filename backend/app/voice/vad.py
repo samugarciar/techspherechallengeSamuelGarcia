@@ -34,7 +34,9 @@ y es lo bastante barato (ver `ms_computo`) para correrlo en cada ventana.
 from __future__ import annotations
 
 import os
+import threading
 import time
+from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
@@ -99,6 +101,17 @@ class ParametrosVAD:
     barato que pisar al paciente."""
 
 
+MUESTRAS_LATENCIA = 4_096
+"""Cuántas latencias de ventana se conservan para el p95.
+
+Eran todas, en una lista que solo crecía: 31 floats por segundo de llamada,
+dentro de un objeto que vive lo que dure la llamada. No tumba nada —son 2,5 MB a
+la hora— pero es una fuga de manual y el p95 no mejora por tener más muestras.
+4.096 ventanas son ~2 min de audio, que es la ventana en la que la cifra
+significa algo: si el VAD se degrada porque Whisper le está robando la CPU, lo
+que interesa es el p95 de ahora, no el promedio con el arranque en frío dentro."""
+
+
 @dataclass(slots=True)
 class Metricas:
     ventanas: int = 0
@@ -107,7 +120,9 @@ class Metricas:
     coste real por ventana de 32 ms; si se acercara a 32 ms el VAD no correría
     en tiempo real."""
 
-    latencias_ventana_ms: list[float] = field(default_factory=list)
+    latencias_ventana_ms: deque[float] = field(
+        default_factory=lambda: deque(maxlen=MUESTRAS_LATENCIA)
+    )
 
     @property
     def ms_por_ventana(self) -> float:
@@ -117,7 +132,7 @@ class Metricas:
     def p95_ms(self) -> float:
         if not self.latencias_ventana_ms:
             return 0.0
-        return float(np.percentile(self.latencias_ventana_ms, 95))
+        return float(np.percentile(np.fromiter(self.latencias_ventana_ms, dtype=float), 95))
 
 
 def ruta_modelo() -> Path:
@@ -135,23 +150,64 @@ def ruta_modelo() -> Path:
     return Path(str(resources.files("pipecat.audio.vad.data").joinpath("silero_vad.onnx")))
 
 
-class _SileroOnnx:
-    """Envoltorio mínimo del modelo. Estado LSTM entre ventanas: es un modelo con
-    memoria, y reiniciarlo en cada ventana degrada mucho la detección."""
+# Sesiones de ONNX compartidas por ruta de modelo. Ver `_sesion_compartida`.
+_sesiones: dict[str, object] = {}
+_cerrojo_sesiones = threading.Lock()
 
-    def __init__(self, ruta: Path | None = None) -> None:
-        import onnxruntime
 
+def _sesion_compartida(ruta: Path):
+    """Una sola `InferenceSession` por fichero de modelo, para todo el proceso.
+
+    Se construía una por `DetectorTurnos`, y hay un `DetectorTurnos` por
+    `SesionVoz`, o sea uno por conexión de `/ws/voz`: cada llamada volvía a
+    cargar Silero. `crear_router()` documenta que el STT y el TTS se crean una
+    sola vez «porque cargar Kokoro o Whisper en el accept() añadiría segundos al
+    inicio de cada llamada»; el VAD es el tercer modelo y se le escapó. Medido:
+    ~27 ms y una arena de memoria propia por conexión, en una máquina de 16 GB
+    que ya comparte Whisper, bge-m3 y el reranker.
+
+    Compartirla es seguro, y no por suerte: el estado del LSTM viaja
+    explícitamente como entrada y salida de `run()` (`state`), no vive dentro de
+    la sesión. Dos llamadas simultáneas conservan cada una su memoria en su
+    `_SileroOnnx`. `InferenceSession.run` es reentrante por contrato de
+    onnxruntime, así que tampoco hace falta serializar las llamadas — solo la
+    construcción, que es lo que protege el cerrojo.
+
+    Se descartó cachear con `functools.lru_cache`: haría falta un `Path`
+    hashable y, sobre todo, no habría forma limpia de vaciarla desde una prueba.
+    """
+    import onnxruntime
+
+    clave = str(ruta)
+    if (sesion := _sesiones.get(clave)) is not None:
+        return sesion
+
+    with _cerrojo_sesiones:
+        if (sesion := _sesiones.get(clave)) is not None:
+            return sesion
         opciones = onnxruntime.SessionOptions()
         # Un hilo por operador: el VAD compite con Whisper y el TTS por la CPU, y
         # con ventanas de 512 muestras el paralelismo no compra nada.
         opciones.inter_op_num_threads = 1
         opciones.intra_op_num_threads = 1
-        self._sesion = onnxruntime.InferenceSession(
-            str(ruta or ruta_modelo()),
+        sesion = onnxruntime.InferenceSession(
+            clave,
             providers=["CPUExecutionProvider"],
             sess_options=opciones,
         )
+        _sesiones[clave] = sesion
+        return sesion
+
+
+class _SileroOnnx:
+    """Envoltorio mínimo del modelo. Estado LSTM entre ventanas: es un modelo con
+    memoria, y reiniciarlo en cada ventana degrada mucho la detección.
+
+    El estado es lo único propio de esta instancia; la sesión de ONNX se comparte
+    (ver `_sesion_compartida`)."""
+
+    def __init__(self, ruta: Path | None = None) -> None:
+        self._sesion = _sesion_compartida(ruta or ruta_modelo())
         self.reiniciar()
 
     def reiniciar(self) -> None:
