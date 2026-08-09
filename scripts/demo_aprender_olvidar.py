@@ -44,12 +44,32 @@ def _consultar(c: httpx.Client, api: str, momento: str) -> dict:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--api", default="http://localhost:8010/api")
+    # 8000 es el puerto de la instrucción de arranque del README. No inventar
+    # otro aquí: un guion de demo que apunta a un puerto distinto del que
+    # documenta el proyecto falla en el paso 1 con un muro de traza de httpx, y
+    # el fallo no se parece en nada a su causa.
+    p.add_argument("--api", default="http://localhost:8000/api")
     p.add_argument("--token", default="cambiar-esto-en-local")
     p.add_argument("--doc", default=str(RAIZ / "eval/corpus_prueba/protocolo_apendicectomia.pdf"))
     a = p.parse_args()
 
     with httpx.Client(headers={"X-Admin-Token": a.token}, timeout=60.0) as c:
+        # Comprobar que hay alguien al otro lado ANTES de subir nada. Sin esto,
+        # el primer error visible es una excepción de conexión a media subida.
+        try:
+            salud = c.get(f"{a.api}/health", timeout=5.0).json()
+        except httpx.HTTPError:
+            print(f"No hay ninguna API escuchando en {a.api}.\n"
+                  f"Levántala con:\n"
+                  f"  cd backend && DATABASE_URL=postgresql://postop:postop@"
+                  f"localhost:5433/postop_wt uv run uvicorn app.main:app --port 8000\n"
+                  f"Y el worker en otra terminal:\n"
+                  f"  cd backend && DATABASE_URL=… uv run python -m app.workers.ingest_worker")
+            return 1
+        if not salud.get("modelos_listos"):
+            print("  (aviso: bge-m3 y el reranker aún se están cargando; la primera\n"
+                  "   consulta irá lenta, pero el resultado es el mismo)\n")
+
         print("1. SUBIR")
         with open(a.doc, "rb") as fh:
             r = c.post(f"{a.api}/documents", files={"file": (Path(a.doc).name, fh)})
