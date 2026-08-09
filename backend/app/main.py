@@ -95,3 +95,24 @@ app.include_router(eventos.router, prefix="/api/documents")
 app.include_router(documentos.router, prefix="/api/documents")
 app.include_router(rag.router, prefix="/api/rag")
 app.include_router(ajustes.router, prefix="/api/settings")
+
+
+# --- Voz -------------------------------------------------------------------
+# Se monta detrás de una variable de entorno y APAGADO por defecto, no por
+# capricho: construir el router carga Silero, Whisper y el motor de TTS, que
+# tardan y ocupan GPU. La consola de administración no necesita nada de eso, y
+# la mayor parte del trabajo con ella —subir, listar, borrar, consultar— iría
+# más lenta a cambio de nada.
+#
+#     VOZ=1 uv run uvicorn app.main:app --port 8000
+#
+# El transporte es el WebSocket propio (`/ws/voz`), que es el que tiene cliente
+# de navegador listo en scripts/spikes/cliente_voz/. La comparativa recomienda
+# Pipecat para producción por solapar el STT con la espera de fin de turno
+# (1.596 ms contra 1.975 ms hasta el primer audio), pero le falta el transporte
+# WebRTC real. Ver docs/VOZ_COMPARATIVA.md.
+if os.environ.get("VOZ", "0").lower() in ("1", "true", "si", "sí"):
+    from app.voice.pipeline_ws import crear_router
+
+    app.include_router(crear_router())
+    log.info("router de voz montado en /ws/voz")
