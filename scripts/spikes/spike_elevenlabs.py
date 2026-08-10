@@ -8,7 +8,8 @@ Gasta a propósito MUY pocos caracteres: el free tier son ~10.000 al mes.
 
 HALLAZGO (08-ago): el free tier NO permite voces de la biblioteca por API —
 devuelve 402 `paid_plan_required`. Solo las voces *premade* funcionan. Por eso
-ELEVENLABS_VOICE_ID apunta a una de ellas (Laura). Con plan de pago se puede
+ELEVENLABS_VOICE_ID apunta a una de ellas (Lily, elegida por Samuel de entre
+tres candidatas escuchándolas). Con plan de pago se puede
 cambiar por una voz nativa española o un clon sin tocar código.
 
     uv run python ../scripts/spikes/spike_elevenlabs.py
