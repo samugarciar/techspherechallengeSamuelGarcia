@@ -588,6 +588,7 @@ async def detalle(call_id: UUID) -> dict[str, Any]:
             SELECT c.id, c.started_at, c.ended_at, c.status, c.escalated,
                    c.escalation_reason, c.escalation_urgency, c.survey,
                    p.full_name,
+                   EXTRACT(EPOCH FROM (coalesce(c.ended_at, now()) - c.started_at)) AS duracion,
                    (SELECT s.procedure_name FROM surgeries s
                      WHERE s.patient_id = p.id
                      ORDER BY s.performed_at DESC LIMIT 1) AS procedimiento
@@ -619,6 +620,7 @@ async def detalle(call_id: UUID) -> dict[str, Any]:
         "cirugia": llamada["procedimiento"],
         "iniciada": llamada["started_at"].isoformat(),
         "terminada": llamada["ended_at"].isoformat() if llamada["ended_at"] else None,
+        "duracion_s": int(llamada["duracion"] or 0),
         "estado": _ESTADO.get(llamada["status"], llamada["status"]),
         "escalada": llamada["escalated"],
         "motivo_escalada": llamada["escalation_reason"],
