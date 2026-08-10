@@ -236,6 +236,7 @@ async def procesar_documento(document_id: UUID, job_id: int | None = None) -> Re
             for previo in anteriores:
                 await _registrar(conn, previo["id"], previo["filename"], "superseded",
                                  f"reemplazado por {document_id}")
+                await conn.execute("DELETE FROM chunks WHERE document_id = %s", (previo["id"],))
 
             await conn.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
 

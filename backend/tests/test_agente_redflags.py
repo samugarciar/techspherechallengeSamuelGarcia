@@ -108,13 +108,14 @@ def test_febricula_no_escala(frase: str) -> None:
 
 
 def test_el_umbral_es_estricto() -> None:
-    """38,5 clavados NO escala; 38,6 sí.
+    """38.5 exactos SÍ escala (>= 38.5); 38.4 no.
 
-    Es una raya fina y discutible —hay protocolos que escalan ya en 38,5— y por
-    eso está probada: si Samuel cambia `UMBRAL_FIEBRE`, este test le dice
-    exactamente qué comportamiento acaba de cambiar."""
+    Decisión 5 del contrato: un paciente que dice '38.5' redondea de oído.
+    En el borde, escalar de más cuesta una llamada; escalar de menos cuesta un
+    paciente sin atender."""
     assert UMBRAL_FIEBRE == 38.5
-    assert codigos("tengo 38.5 grados de fiebre") == []
+    assert codigos("tengo 38.4 grados de fiebre") == []
+    assert "fiebre_alta" in codigos("tengo 38.5 grados de fiebre")
     assert "fiebre_alta" in codigos("tengo 38.6 grados de fiebre")
 
 

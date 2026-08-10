@@ -156,6 +156,12 @@ class AgenteLlamada(LLMClient):
         nueva_alarma = banderas and self.alarma is None
         if nueva_alarma:
             self.alarma = redflags.peor(banderas)
+            if self.contexto.call_id and self.alarma:
+                await guardar_turno(
+                    self.contexto.call_id,
+                    "system",
+                    f"ALARMA DETECTADA — «{self.alarma.motivo}» (Urgencia: {self.alarma.urgencia})",
+                )
 
         self.historial.append(Mensaje("user", texto_paciente))
         sistema = self._sistema_del_turno(bool(nueva_alarma))
@@ -163,6 +169,15 @@ class AgenteLlamada(LLMClient):
         t_llm = time.perf_counter()
         texto, rondas = await self._bucle_herramientas(sistema)
         ms_llm = (time.perf_counter() - t_llm) * 1000
+
+        if self.contexto.call_id:
+            from app.db.traces import registrar_traza
+            await registrar_traza(
+                span="llm",
+                duration_ms=ms_llm,
+                call_id=self.contexto.call_id,
+                metadata={"rondas": rondas, "procedimiento": self.contexto.procedimiento},
+            )
 
         turno = TurnoAgente(
             texto=texto,

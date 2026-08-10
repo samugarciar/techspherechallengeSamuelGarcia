@@ -66,6 +66,9 @@ async def reordenar(
     if not candidatos:
         return []
     if not s.rerank_enabled:
+        max_rrf = 2.0 / (60 + 1)
+        for frag in candidatos:
+            frag.score = min(1.0, frag.score / max_rrf)
         return candidatos[:top_k]
 
     puntuaciones = await asyncio.to_thread(

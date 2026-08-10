@@ -413,7 +413,7 @@ def _fiebre(texto: str) -> BanderaRoja | None:
         ventana = texto[max(0, m.start() - _VENTANA_PISTA): m.end() + _VENTANA_PISTA]
         if not _PISTAS_FIEBRE.search(ventana):
             continue
-        if valor <= UMBRAL_FIEBRE:
+        if valor < UMBRAL_FIEBRE:
             continue
         if _esta_negado(texto, m.start()):
             continue

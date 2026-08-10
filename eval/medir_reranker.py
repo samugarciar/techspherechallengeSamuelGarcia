@@ -37,17 +37,16 @@ from app.rag import embeddings, retrieval  # noqa: E402
 # cirugías comparten vocabulario ("herida", "fiebre", "cita"), así que acertar
 # el documento exige entender de qué operación habla el paciente, no solo
 # reconocer el tema.
-CASOS = [
-    ("¿cuándo puedo ducharme tras la apendicectomía?", "apendicectomia"),
-    ("me quitaron el apéndice, ¿cuándo vuelvo a trabajar?", "apendicectomia"),
-    ("¿qué hago si tengo fiebre después de que me quitaran el apéndice?", "apendicectomia"),
-    ("después de la operación de vesícula, ¿qué dieta debo seguir?", "colecistectomia"),
-    ("¿puedo comer grasas después de quitarme la vesícula?", "colecistectomia"),
-    ("tras la cirugía de vesícula, ¿cuándo es mi revisión?", "colecistectomia"),
-    ("me operaron de una hernia inguinal, ¿puedo levantar peso?", "herniorrafia"),
-    ("¿cómo curo la herida de la hernia?", "herniorrafia"),
-    ("después de la operación de hernia, ¿cuándo puedo conducir?", "herniorrafia"),
-]
+def cargar_casos() -> list[tuple[str, str]]:
+    import json
+    path_golden = Path(__file__).resolve().parent / "golden_set_rag.json"
+    if path_golden.exists():
+        try:
+            data = json.loads(path_golden.read_text("utf-8"))
+            return [(q["pregunta"], q["documento_esperado"].replace(".pdf", "")) for q in data]
+        except Exception:
+            pass
+    return CASOS
 
 
 def _acierta(frags, esperado: str) -> bool:
@@ -70,13 +69,14 @@ async def main() -> int:
     try:
         from app.rag import rerank
 
-        print(f"corpus: {len(CASOS)} preguntas · reranker {s.rerank_model}\n")
+        casos = cargar_casos()
+        print(f"corpus: {len(casos)} preguntas · reranker {s.rerank_model}\n")
 
         # --- Cuánto mejora ---------------------------------------------------
         sin_top1 = sin_ctx = con_top1 = con_ctx = 0
         t_busq, t_rer = [], []
 
-        for consulta, esperado in CASOS:
+        for consulta, esperado in casos:
             qv = await embeddings.embeber_consulta(consulta)
 
             t0 = time.perf_counter()
@@ -93,7 +93,7 @@ async def main() -> int:
             con_top1 += _acierta(ordenados, esperado)
             con_ctx += _en_contexto(ordenados, esperado, s.context_top_k)
 
-        n = len(CASOS)
+        n = len(casos)
         print(f"{'':<26} {'doc correcto 1º':>16} {f'correcto en top-{s.context_top_k}':>18} {'ms':>8}")
         print(f"{'híbrido sin reranker':<26} {f'{sin_top1}/{n}':>16} {f'{sin_ctx}/{n}':>18} "
               f"{statistics.median(t_busq):>7.0f}")

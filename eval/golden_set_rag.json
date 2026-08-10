@@ -1,0 +1,212 @@
+[
+  {
+    "id": "q1",
+    "pregunta": "¿Cuándo puedo ducharme después de la cirugía?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Cuidado de la herida",
+    "palabras_clave": ["duchar", "baño", "48 horas", "apósito"]
+  },
+  {
+    "id": "q2",
+    "pregunta": "¿Qué debo hacer si la herida empieza a sangrar mucho?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Signos de alarma",
+    "palabras_clave": ["sangrado", "sangre", "presión", "urgencias"]
+  },
+  {
+    "id": "q3",
+    "pregunta": "¿A partir de qué temperatura se considera fiebre preocupante?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Signos de alarma",
+    "palabras_clave": ["38.5", "fiebre", "termómetro", "grados"]
+  },
+  {
+    "id": "q4",
+    "pregunta": "¿Cuándo me retiran los puntos o grapas de la incisión?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Puntos de sutura",
+    "palabras_clave": ["puntos", "grapas", "7 a 10 días", "retirar"]
+  },
+  {
+    "id": "q5",
+    "pregunta": "¿Puedo comer alimentos grasos tras una colecistectomía?",
+    "documento_esperado": "protocolo_colecistectomia.pdf",
+    "seccion_esperada": "Dieta y alimentación",
+    "palabras_clave": ["grasas", "dieta blanda", "tolerancia", "digestión"]
+  },
+  {
+    "id": "q6",
+    "pregunta": "¿Cuánto peso puedo levantar tras la operación de hernia?",
+    "documento_esperado": "protocolo_herniorrafia.pdf",
+    "seccion_esperada": "Actividad física",
+    "palabras_clave": ["peso", "esfuerzo", "5 kg", "esfuerzos físicos"]
+  },
+  {
+    "id": "q7",
+    "pregunta": "¿Es normal sentir un leve adormecimiento alrededor de la cicatriz?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Evolución normal",
+    "palabras_clave": ["adormecimiento", "sensibilidad", "normal", "nervios"]
+  },
+  {
+    "id": "q8",
+    "pregunta": "¿Qué remedio o analgesia puedo tomar si me duele la zona operada?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Manejo del dolor",
+    "palabras_clave": ["paracetamol", "analgésico", "dolor", "pauta"]
+  },
+  {
+    "id": "q9",
+    "pregunta": "¿Cuándo puedo volver a conducir mi vehículo?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Conducción y movilidad",
+    "palabras_clave": ["conducir", "coche", "días", "movilidad"]
+  },
+  {
+    "id": "q10",
+    "pregunta": "¿Qué hago si sale un líquido amarillento con mal olor de la herida?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Signos de alarma",
+    "palabras_clave": ["pus", "infección", "secreción", "mal olor"]
+  },
+  {
+    "id": "q11",
+    "pregunta": "¿Cuándo puedo retomar mi actividad laboral o trabajo de oficina?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Baja laboral",
+    "palabras_clave": ["trabajo", "baja", "reincorporación", "días"]
+  },
+  {
+    "id": "q12",
+    "pregunta": "¿Es normal tener náuseas moderadas el primer día tras el alta?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Síntomas comunes",
+    "palabras_clave": ["náuseas", "anestesia", "tolerancia", "líquidos"]
+  },
+  {
+    "id": "q13",
+    "pregunta": "¿Qué debo hacer si los puntos de la cicatriz se abren?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Signos de alarma",
+    "palabras_clave": ["dehiscencia", "abrir", "puntos", "cubrir con gasa"]
+  },
+  {
+    "id": "q14",
+    "pregunta": "¿Cuándo se realiza la primera cita de revisión en consulta?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Seguimiento",
+    "palabras_clave": ["cita", "revisión", "consulta", "días"]
+  },
+  {
+    "id": "q15",
+    "pregunta": "¿Puedo quitarme el apósito seco para ver la herida?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Cuidado de la herida",
+    "palabras_clave": ["apósito", "curas", "herida", "seco"]
+  },
+  {
+    "id": "q16",
+    "pregunta": "¿Qué dolor en el pecho requiere llamar a urgencias de inmediato?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Urgencias generales",
+    "palabras_clave": ["dolor torácico", "pecho", "disnea", "urgencias"]
+  },
+  {
+    "id": "q17",
+    "pregunta": "¿Puedo caminar y dar paseos suaves el segundo día?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Movilidad",
+    "palabras_clave": ["caminar", "pasear", "deambulacion", "movilidad"]
+  },
+  {
+    "id": "q18",
+    "pregunta": "¿Qué alimentación debo llevar los primeros dos días en casa?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Dieta",
+    "palabras_clave": ["dieta blanda", "líquidos", "digestión", "fibra"]
+  },
+  {
+    "id": "q19",
+    "pregunta": "¿Es peligroso si noto hinchazón y calor alrededor de los puntos?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Infección",
+    "palabras_clave": ["hinchazón", "calor", "enrojecimiento", "infección"]
+  },
+  {
+    "id": "q20",
+    "pregunta": "¿Qué hacer si presento falta de aire o dificultad para respirar?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Signos de alarma",
+    "palabras_clave": ["disnea", "aire", "respirar", "urgente"]
+  },
+  {
+    "id": "q21",
+    "pregunta": "¿Debo tomar antibióticos sin indicación expresa del cirujano?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Medicación",
+    "palabras_clave": ["antibiótico", "pauta", "prescripción", "no alterar"]
+  },
+  {
+    "id": "q22",
+    "pregunta": "¿Es normal un pequeño moretón o hematoma cerca de la incisión?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Evolución normal",
+    "palabras_clave": ["hematoma", "moretón", "equimosis", "normal"]
+  },
+  {
+    "id": "q23",
+    "pregunta": "¿Puedo bañarme en piscina o mar las dos primeras semanas?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Cuidado de la herida",
+    "palabras_clave": ["piscina", "inmersión", "baño", "prohibido"]
+  },
+  {
+    "id": "q24",
+    "pregunta": "¿Cómo debo limpiar la herida al ducharme?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Cuidado de la herida",
+    "palabras_clave": ["agua y jabón", "secar a toques", "suave", "limpieza"]
+  },
+  {
+    "id": "q25",
+    "pregunta": "¿Qué debo hacer si tengo estreñimiento tras la operación?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Tránsito intestinal",
+    "palabras_clave": ["estreñimiento", "fibra", "agua", "laxante suave"]
+  },
+  {
+    "id": "q26",
+    "pregunta": "¿Cuándo puedo practicar deporte o ejercicio de alto impacto?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Actividad física",
+    "palabras_clave": ["deporte", "ejercicio", "4 semanas", "esfuerzo"]
+  },
+  {
+    "id": "q27",
+    "pregunta": "¿Qué hacer si la gasa se mancha levemente de suero rosado?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Cuidado de la herida",
+    "palabras_clave": ["seroso", "manchita", "apósito", "normal"]
+  },
+  {
+    "id": "q28",
+    "pregunta": "¿Qué ropa es recomendable usar sobre la zona operada?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Recomendaciones generales",
+    "palabras_clave": ["ropa holgada", "algodón", "sin presión", "cómoda"]
+  },
+  {
+    "id": "q29",
+    "pregunta": "¿Qué hacer si olvido una toma de mi analgésico programado?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Medicación",
+    "palabras_clave": ["toma", "dosis", "olvido", "siguiente horario"]
+  },
+  {
+    "id": "q30",
+    "pregunta": "¿A quién debo llamar si tengo una duda que no aparece en esta guía?",
+    "documento_esperado": "protocolo_apendicectomia.pdf",
+    "seccion_esperada": "Contacto",
+    "palabras_clave": ["equipo médico", "equipo clínico", "teléfono de contacto"]
+  }
+]

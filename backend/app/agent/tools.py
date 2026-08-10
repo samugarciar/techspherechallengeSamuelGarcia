@@ -156,10 +156,30 @@ def esquemas(claves_survey: list[str]) -> list[dict[str, Any]]:
             "name": "obtener_paciente",
             "description": (
                 "Datos identificativos del paciente al que estás llamando: nombre "
-                "completo, nombre preferido, fecha de nacimiento y próxima cita. "
-                "Úsala al principio para verificar la identidad."
+                "completo, nombre preferido y próxima cita. "
+                "Úsala al principio antes de verificar la identidad."
             ),
             "parameters": _SIN_ARGUMENTOS,
+        },
+        {
+            "name": "verificar_identidad",
+            "description": (
+                "Verifica la identidad del paciente comparando la fecha de nacimiento "
+                "dicha por el paciente con los registros del sistema. Devuelve coincide=true/false."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fecha_nacimiento_dicha": {
+                        "type": "string",
+                        "description": (
+                            "La fecha de nacimiento expresada por el paciente (ejemplo: "
+                            "'12 de abril de 1978' o '1978-04-12')."
+                        ),
+                    }
+                },
+                "required": ["fecha_nacimiento_dicha"],
+            },
         },
         {
             "name": "obtener_cirugia",
@@ -307,6 +327,10 @@ class Herramientas:
         match nombre:
             case "obtener_paciente":
                 return await self._paciente()
+            case "verificar_identidad":
+                return await self._verificar_identidad(
+                    str(args.get("fecha_nacimiento_dicha", ""))
+                )
             case "obtener_cirugia":
                 return await self._cirugia()
             case "obtener_medicacion":
@@ -347,16 +371,57 @@ class Herramientas:
         return {
             "nombre_completo": fila["full_name"],
             "nombre_preferido": fila["preferred_name"],
-            # La fecha se devuelve para poder COMPARARLA con la que diga el
-            # paciente, no para leérsela. La regla de no decirla en voz alta está
-            # en el prompt de sistema. Ver `app/agent/prompts.py`.
-            "fecha_nacimiento": fila["birth_date"],
-            "fecha_nacimiento_en_palabras": fecha_en_palabras(fila["birth_date"]),
             "proxima_cita": fecha_en_palabras(fila["proxima_cita"]),
             "proxima_cita_hora": (
                 fila["proxima_cita"].strftime("%H:%M") if fila["proxima_cita"] else None
             ),
             "lugar_cita": fila["lugar_cita"],
+        }
+
+    async def _verificar_identidad(self, fecha_dicha: str) -> dict[str, Any]:
+        async with connection() as conn:
+            cur = await conn.execute(
+                "SELECT birth_date FROM patients WHERE id = %s",
+                (self.contexto.patient_id,),
+            )
+            fila = await cur.fetchone()
+        if fila is None or not fila["birth_date"]:
+            return {"coincide": False, "error": "paciente no encontrado"}
+
+        bd = fila["birth_date"]
+        texto_bd_iso = bd.isoformat()
+        texto_bd_palabras = fecha_en_palabras(bd) or ""
+
+        import unicodedata
+        dicha_norm = "".join(c for c in unicodedata.normalize("NFD", fecha_dicha.lower()) if unicodedata.category(c) != "Mn").strip()
+        palabras_norm = "".join(c for c in unicodedata.normalize("NFD", texto_bd_palabras.lower()) if unicodedata.category(c) != "Mn").strip()
+
+        year_str = str(bd.year)
+        day_str = str(bd.day)
+        month_name = _MESES[bd.month - 1]
+
+        coincide = (
+            texto_bd_iso in dicha_norm
+            or palabras_norm in dicha_norm
+            or (year_str in dicha_norm and (day_str in dicha_norm or month_name in dicha_norm))
+        )
+
+        if coincide:
+            return {
+                "coincide": True,
+                "instruccion": (
+                    "Identidad VERIFICADA correctamente. Procede a llamar a obtener_cirugia "
+                    "y explicarle al paciente de qué le llamas."
+                ),
+            }
+
+        return {
+            "coincide": False,
+            "instruccion": (
+                "La fecha de nacimiento NO coincide con la del sistema. No des ningún "
+                "dato personal ni clínico, di amablemente que volverás a llamar en otro "
+                "momento y despídete."
+            ),
         }
 
     async def _cirugia(self) -> dict[str, Any]:

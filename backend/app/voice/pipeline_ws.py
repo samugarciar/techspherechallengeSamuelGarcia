@@ -337,16 +337,16 @@ class SesionVoz:
         params_vad: ParametrosVAD | None = None,
         sistema: str = "",
     ) -> None:
-        from app.voice.stt import WhisperSTT
+        from app.voice.voice_mode import VoiceRouter
 
         self._enviar_audio = enviar_audio
         self._enviar_evento = enviar_evento or _sin_eventos
         self._stt = stt or WhisperSTT()
         # Si el motor viene de fuera lo comparten varias llamadas, así que esta
-        # sesión no puede cerrarlo: cerrar el cliente HTTP de un motor de nube
-        # dejaría muda la llamada siguiente.
+        # sesión no puede cerrarlo.
         self._motor_propio = motor_tts is None
-        self._motor = motor_tts or crear_motor(get_settings().tts_engine_local)
+        self._router = VoiceRouter() if motor_tts is None else None
+        self._motor = motor_tts
         self._llm = llm or ClienteLLMFalso()
         # Sin `llamada` esto es una sesión suelta: se habla, se mide y no se
         # persiste nada. Es el modo del arnés de medición y el de
@@ -713,7 +713,13 @@ class SesionVoz:
 
     async def _emitir(self, m: MetricasTurno, frase: str, t_fin_voz: float) -> None:
         t0 = time.perf_counter()
-        audio = await self._motor.sintetizar(frase)
+        call_id_str = str(self._llamada.call_id) if (self._llamada and hasattr(self._llamada, "call_id")) else None
+        if self._router is not None:
+            audio = await self._router.sintetizar(frase, call_id=call_id_str)
+        elif self._motor is not None:
+            audio = await self._motor.sintetizar(frase)
+        else:
+            raise RuntimeError("No hay motor de TTS disponible")
         ms = (time.perf_counter() - t0) * 1000
         if not m.tts_primera_frase_ms:
             m.tts_primera_frase_ms = ms
@@ -806,7 +812,9 @@ class SesionVoz:
             # pendiente de escribir en la base, y hacerlo después de cerrar el
             # motor no cambia nada salvo el orden en que fallaría.
             await self._llamada.cerrar()
-        if self._motor_propio:
+        if self._router is not None:
+            await self._router.cerrar()
+        elif self._motor_propio and self._motor is not None:
             await self._motor.cerrar()
 
 

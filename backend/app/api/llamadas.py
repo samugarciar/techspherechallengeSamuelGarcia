@@ -476,8 +476,14 @@ class SesionDeVoz(LLMClient):
         except Exception:
             log.exception("no se pudo sellar la llamada %s al colgar", self.call_id)
 
-        _AGENTES.pop(str(self.call_id), None)
         _VOCES.pop(str(self.call_id), None)
+
+        async def _limpiar_agente_con_gracia():
+            await asyncio.sleep(30.0)
+            if str(self.call_id) not in _VOCES:
+                _AGENTES.pop(str(self.call_id), None)
+
+        asyncio.create_task(_limpiar_agente_con_gracia())
 
     # -- la cola ------------------------------------------------------------
     def _encolar(self, trabajo: Callable[[], Awaitable[None]]) -> None:

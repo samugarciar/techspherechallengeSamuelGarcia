@@ -148,15 +148,6 @@ async def test_la_consulta_llega_recortada_al_modelo(cliente, cabeceras, monkeyp
 # --- El interruptor del reranker ---------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Escalas incompatibles: apagar RERANK_ENABLED deja `hay_evidencia` "
-        "siempre en False. Arreglo pendiente de decisión, fuera del alcance de "
-        "esta revisión (app/rag/rerank.py es de otro agente). Cuando se arregle, "
-        "este test pasará a XPASS y habrá que quitarle el marcador."
-    ),
-)
 async def test_hay_evidencia_sigue_significando_algo_sin_reranker():
     """RERANK_ENABLED=0 es el escape de latencia documentado, y rompe el grounding.
 

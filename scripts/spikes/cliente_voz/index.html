@@ -42,6 +42,10 @@
 <p>Dos clics: <b>Conectar</b> y luego <b>Hablar</b>. Habla, calla, y el agente
 responde. Interrúmpele a media frase: debe callarse.</p>
 
+<p class="aviso" style="margin-top: 0.5rem; background: rgba(180, 83, 9, 0.1); padding: 0.5rem 0.75rem; border-radius: 0.375rem;">
+  <b>Aviso:</b> Conectarse sin <code>?call_id=...</code> usa <code>ClienteLLMFalso</code> (frase fija). Para probar el agente clínico con Gemini, Postgres y RAG reales, inicia la llamada desde la pantalla <code>/call</code> de la aplicación web.
+</p>
+
 <p>
   <label>Servidor
     <input id="url" size="34" value="ws://localhost:8000/ws/voz">

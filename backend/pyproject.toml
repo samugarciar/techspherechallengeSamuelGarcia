@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "sse-starlette>=2.2",
+    "websockets>=12.0",
     # DB
     "psycopg[binary,pool]>=3.2",
     "pgvector>=0.3.6",
