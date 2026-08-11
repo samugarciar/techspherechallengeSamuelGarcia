@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import exigir_admin
 from app.core.config import get_settings
+from app.db.traces import registrar_traza
 from app.rag import embeddings
 from app.rag.rerank import hay_evidencia, reordenar
 from app.rag.retrieval import buscar, revalidar
@@ -71,6 +72,26 @@ async def consultar(cuerpo: Consulta) -> dict[str, Any]:
     fragmentos = await revalidar(reordenados)
     t4 = perf_counter()
 
+    duracion_ms = round((t4 - t0) * 1000)
+    evidencia_ok = hay_evidencia(fragmentos)
+
+    await registrar_traza(
+        span="retrieval",
+        duration_ms=duracion_ms,
+        metadata={
+            "consulta": cuerpo.consulta,
+            "hay_evidencia": evidencia_ok,
+            "fragmentos_count": len(fragmentos),
+            "documentos": [f.filename for f in fragmentos],
+            "ms": {
+                "embedding": round((t1 - t0) * 1000),
+                "retrieval": round((t2 - t1) * 1000),
+                "rerank": round((t3 - t2) * 1000),
+                "total": duracion_ms,
+            },
+        },
+    )
+
     return {
         "fragmentos": [
             {
@@ -87,7 +108,7 @@ async def consultar(cuerpo: Consulta) -> dict[str, Any]:
         # El umbral de grounding vive en rerank.hay_evidencia, no aquí: la misma
         # decisión la toma el agente de voz, y duplicarla sería garantizar que
         # algún día divergen.
-        "hay_evidencia": hay_evidencia(fragmentos),
+        "hay_evidencia": evidencia_ok,
         # El contrato publica estas cuatro claves y la consola las pinta; la
         # revalidación (~1 ms, una consulta por clave primaria) va dentro de
         # `total` en vez de añadir una quinta que el frontend no espera.
@@ -95,6 +116,6 @@ async def consultar(cuerpo: Consulta) -> dict[str, Any]:
             "embedding": round((t1 - t0) * 1000),
             "retrieval": round((t2 - t1) * 1000),
             "rerank": round((t3 - t2) * 1000),
-            "total": round((t4 - t0) * 1000),
+            "total": duracion_ms,
         },
     }

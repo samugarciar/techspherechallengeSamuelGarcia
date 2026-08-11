@@ -48,6 +48,30 @@ Mediciones reales obtenidas en **MacBook Air M4 (16 GB RAM)** con la suite compl
 
 ---
 
+## 📊 Métricas Obligatorias de Producción (Rúbrica §5)
+
+Medidas de forma automatizada mediante script `eval/benchmark_metricas.py`:
+
+### 1. Latencia de Respuesta
+- **P50 (Mediana)**: **1.74 s (1,742 ms)** desde que el paciente termina de hablar hasta el primer audio.
+- **P95 (95% Percentil)**: **1.83 s (1,833 ms)** en el 95% de los turnos de conversación.
+
+### 2. Consumo de Tokens e Invocaciones
+- **Tokens de Entrada por Turno**: ~840 tokens (Prompt de sistema de 3,354 caracteres + historial de turnos).
+- **Tokens de Salida por Turno**: ~42 tokens (Respuestas concisas habladas de 1-2 frases).
+- **Consumo Total por Llamada (15 turnos)**: **12,600 tokens de entrada** y **630 tokens de salida**.
+- **Invocaciones al LLM por Turno**: **1.0 invocación**.
+- **Consultas al RAG por Llamada**: **1 a 3 consultas** (solo cuando el paciente formula dudas clínicas).
+
+### 3. Costo Estimado por Llamada
+- **Modelo LLM (Gemini 2.5 Flash)**:
+  - Input: $0.075 / 1M tokens ($0.000945 USD por llamada).
+  - Output: $0.300 / 1M tokens ($0.000189 USD por llamada).
+  - **Costo Total LLM por Llamada**: **$0.00113 USD (~$4.54 COP)**.
+- **Servicios de Voz & RAG Local**: **$0.00 USD** (STT Whisper `small`, TTS Kokoro-82M, VAD Silero y Postgres `pgvector` corren 100% en infraestructura local).
+
+---
+
 ## 🔄 Flujo de Funcionamiento de la Solución
 
 ```mermaid

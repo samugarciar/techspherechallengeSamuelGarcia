@@ -293,7 +293,8 @@ _REGLAS: list[tuple[str, Urgencia, str, str, str]] = [
         rf"me\s+(?:cuesta|costaba)\s+{_H}respirar|"
         r"me\s+ahogo|me\s+estoy\s+ahogando|sensacion\s+de\s+ahogo|"
         r"dificultad\s+(?:para|al)\s+respirar|"
-        r"me\s+quedo\s+sin\s+aire|"
+        r"me\s+quedo\s+sin\s+aire|se\s+me\s+fue\s+el\s+aliento|"
+        r"fatiga\s+en\s+el\s+pecho|asfixia|me\s+siento\s+asfixiad[ao]|"
         r"(?:respiro|respirar)\s+con\s+dificultad"
         r")",
     ),
@@ -303,7 +304,7 @@ _REGLAS: list[tuple[str, Urgencia, str, str, str]] = [
         "signos de infección en la herida",
         "signos de infeccion de la herida quirurgica pus enrojecimiento",
         r"(?:"
-        r"\bpus\b|purulent[ao]|supura|supurando|"
+        r"\bpus\b|purulent[ao]|supura|supurando|chichon\s+con\s+pus|broto\s+un\s+chichon|"
         rf"(?:sale|saliendo|salir)\s+{_H}(?:un\s+|una\s+)?(?:liquido|material|secrecion)\s+"
         r"(?:\w+\s+){0,2}?(?:amarill[ao]|verd[eo]s?|verdos[ao]|con\s+mal\s+olor|maloliente)|"
         r"(?:liquido|material|secrecion)\s+(?:amarill[ao]|verdos[ao]|purulent[ao])|"
@@ -331,7 +332,8 @@ _REGLAS: list[tuple[str, Urgencia, str, str, str]] = [
         r"(?:"
         r"(?:mucha|much[ií]sima|bastante|alt[ai]sima)\s+fiebre|"
         r"fiebre\s+(?:muy\s+)?(?:alta|altisima|fuerte)|"
-        r"(?:ardiendo|hirviendo)\s+(?:de\s+fiebre|en\s+fiebre)|"
+        r"(?:ardiendo|hirviendo)\s+(?:de\s+fiebre|en\s+fiebre|en\s+calentura)|"
+        r"volando\s+en\s+fiebre|con\s+templorina|tengo\s+calentura|"
         r"estoy\s+ardiendo|"
         r"fiebrones?"
         r")",

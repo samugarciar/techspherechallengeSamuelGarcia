@@ -495,6 +495,7 @@ class Herramientas:
         preciso y está pendiente: exige columna y `WHERE` en `retrievable_chunks`,
         que es de la Fase 1 y no es mía.
         """
+        from app.db.traces import registrar_traza
         from app.rag.query import consultar
 
         if not consulta:
@@ -503,6 +504,19 @@ class Herramientas:
         etiqueta = etiqueta_de(self.contexto.protocol_tag, self.contexto.procedimiento)
         enriquecida = f"{self.contexto.procedimiento}. {consulta}" if etiqueta else consulta
         resultado = await consultar(enriquecida)
+
+        await registrar_traza(
+            span="retrieval",
+            duration_ms=resultado.latencias.get("total", 0),
+            call_id=self.contexto.call_id,
+            metadata={
+                "consulta": consulta,
+                "enriquecida": enriquecida,
+                "hay_evidencia": resultado.hay_evidencia,
+                "fragmentos_count": len(resultado.fragmentos),
+                "ms": resultado.latencias,
+            },
+        )
 
         if not resultado.hay_evidencia:
             # Sin fragmentos, ni siquiera los malos. Ver la cabecera del módulo.
