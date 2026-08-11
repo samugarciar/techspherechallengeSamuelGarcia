@@ -157,6 +157,42 @@ POR_PROTOCOLO: dict[str, list[Pregunta]] = {
             MARCA_ESPECIFICO,
         ),
     ],
+    "colectomia": [
+        Pregunta(
+            "transito_intestinal",
+            "¿Ha estado evacuando el intestino y expulsando gases con normalidad?",
+            MARCA_ESPECIFICO,
+        ),
+        Pregunta(
+            "tolerancia_alimentos",
+            "¿Está tolerando la dieta suave o le dan cólicos fuertes después de comer?",
+            MARCA_ESPECIFICO,
+        ),
+    ],
+    "reemplazo_articular": [
+        Pregunta(
+            "movilidad_articulación",
+            "¿Ha estado realizando los ejercicios de movilidad recomendados para su prótesis?",
+            MARCA_ESPECIFICO,
+        ),
+        Pregunta(
+            "hinchazon_pierna",
+            "¿Tiene la pierna o el tobillo muy hinchados o dolor en la pantorrilla?",
+            MARCA_ESPECIFICO,
+        ),
+    ],
+    "mastectomia": [
+        Pregunta(
+            "drenaje_herida",
+            "¿Cómo está funcionando el drenaje? ¿Ha notado secreción abundante o mal olor?",
+            MARCA_ESPECIFICO,
+        ),
+        Pregunta(
+            "movilidad_brazo",
+            "¿Ha podido mover suavemente el brazo del lado operado según las indicaciones?",
+            MARCA_ESPECIFICO,
+        ),
+    ],
 }
 
 # Si `protocol_tag` viene vacío —un alta cargada a mano, un procedimiento que
@@ -171,6 +207,14 @@ _ALIAS: dict[str, str] = {
     "hernio": "herniorrafia",
     "hernia": "herniorrafia",
     "eventro": "herniorrafia",
+    "colectom": "colectomia",
+    "colon": "colectomia",
+    "cadera": "reemplazo_articular",
+    "rodilla": "reemplazo_articular",
+    "articular": "reemplazo_articular",
+    "mastectom": "mastectomia",
+    "seno": "mastectomia",
+    "mama": "mastectomia",
 }
 
 

@@ -1,14 +1,13 @@
 """
 Poblador de base de datos con el Dataset Oficial Colombiano del Reto.
 
-Importa:
-1. perfiles_pacientes_co.xlsx -> pacientes (patients)
-2. trayectorias_postop_silver.xlsx -> cirugías (surgeries) y trayectoria
-3. Archivos clínicos en dataset/textos/ -> documentos RAG si están disponibles
+Une `perfiles_pacientes_co.xlsx` y `perfiles_clinicos_pacientes_silver_contest.xlsx`
+para repoblar las tablas `patients`, `surgeries`, `medications` y `appointments`
+con los datos exactos del concurso y fechas de nacimiento calculadas válidas.
 """
 
 import sys
-import json
+import datetime
 import pathlib
 import psycopg
 import pandas as pd
@@ -17,56 +16,84 @@ from psycopg.rows import dict_row
 DATASET_DIR = pathlib.Path("/Users/samug/Downloads/ParticipantArtifacts-main/dataset")
 DB_URL = "postgresql://postop:postop@localhost:5433/postop"
 
+# Mapeo de módulo / procedimiento a etiqueta de protocolo RAG
+MAPA_PROTOCOLOS = {
+    "appendicitis": "apendicectomia",
+    "Apendicectomía": "apendicectomia",
+    "cholecystitis": "colecistectomia",
+    "Colecistectomía": "colecistectomia",
+    "colorectal_cancer": "colectomia",
+    "Colectomía": "colectomia",
+    "total_joint_replacement": "reemplazo_articular",
+    "Reemplazo de cadera/rodilla": "reemplazo_articular",
+    "breast_cancer": "mastectomia",
+    "Mastectomía": "mastectomia",
+}
+
+
 def sembrar_dataset_oficial():
     pacientes_file = DATASET_DIR / "perfiles_pacientes_co.xlsx"
-    trayectorias_file = DATASET_DIR / "trayectorias_postop_silver.xlsx"
+    clinico_file = DATASET_DIR / "perfiles_clinicos_pacientes_silver_contest.xlsx"
 
-    if not pacientes_file.exists():
-        print(f"Error: No se encontró {pacientes_file}")
+    if not pacientes_file.exists() or not clinico_file.exists():
+        print(f"Error: Archivos no encontrados en {DATASET_DIR}")
         sys.exit(1)
 
-    print("Cargando DataFrames de Excel...")
-    df_pacientes = pd.read_excel(pacientes_file)
-    df_trayectorias = pd.read_excel(trayectorias_file)
+    print("Cargando DataFrames del dataset oficial...")
+    df_pac = pd.read_excel(pacientes_file)
+    df_cli = pd.read_excel(clinico_file)
+
+    # Merge por paciente_id
+    df_merged = pd.merge(df_pac, df_cli, on="paciente_id", how="inner")
 
     with psycopg.connect(DB_URL, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
-            print("Insertando/Actualizando pacientes colombianos del reto...")
+            print("Limpiando tablas de pacientes previas...")
+            cur.execute("TRUNCATE patients, surgeries, medications, appointments CASCADE;")
+
+            print(f"Insertando {len(df_merged)} pacientes del dataset oficial...")
             count_pacientes = 0
             count_cirugias = 0
 
-            # Mapeo de paciente_id -> uuid de la BD
-            paciente_map = {}
-
-            for _, row in df_pacientes.iterrows():
-                p_id_ext = str(row["paciente_id"])
+            for idx, row in df_merged.iterrows():
                 nombre = str(row["nombre_completo"])
                 doc_cc = str(row["documento_cc"])
                 eps = str(row["eps"])
+                ciudad = str(row["ciudad"])
+                departamento = str(row["departamento"])
+                edad = int(row["edad"])
+                genero = str(row.get("genero", "M"))
 
-                # Insertar o recuperar paciente
+                # Fecha de nacimiento calculada a partir de la edad
+                mes = (idx % 12) + 1
+                dia = (idx % 28) + 1
+                birth_date = datetime.date(2026 - edad, mes, dia)
+
+                phone = f"+57 3{idx:02d} {doc_cc[:3]} {doc_cc[3:7]}"
+                preferred_name = nombre.split()[0]
+
                 cur.execute(
                     """
-                    INSERT INTO patients (full_name, phone, preferred_name)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO patients (full_name, birth_date, phone, preferred_name)
+                    VALUES (%s, %s, %s, %s)
                     RETURNING id;
                     """,
-                    (nombre, f"CC {doc_cc} - {eps}", nombre.split()[0]),
+                    (nombre, birth_date, phone, preferred_name),
                 )
-                res = cur.fetchone()
-                db_patient_id = res["id"]
-                paciente_map[p_id_ext] = db_patient_id
+                res_p = cur.fetchone()
+                patient_id = res_p["id"]
                 count_pacientes += 1
 
-                # Crear cirugía postoperatoria por defecto (Apendicectomía / Colecistectomía / Herniorrafía)
-                procedimiento = "Apendicectomía laparoscópica"
-                protocol_tag = "apendicectomia"
-                if count_pacientes % 3 == 0:
-                    procedimiento = "Colecistectomía laparoscópica"
-                    protocol_tag = "colecistectomia"
-                elif count_pacientes % 3 == 1:
-                    procedimiento = "Herniorrafía inguinal"
-                    protocol_tag = "herniorrafia"
+                # Cirugía asociada
+                procedimiento = str(row["procedimiento"])
+                modulo = str(row.get("modulo_synthea", "appendicitis"))
+                protocol_tag = MAPA_PROTOCOLOS.get(procedimiento, MAPA_PROTOCOLOS.get(modulo, "apendicectomia"))
+
+                cirujano = f"Dr. Carlos Restrepo ({eps})"
+                notas = (
+                    f"Postoperatorio en casa. Ciudad: {ciudad} ({departamento}). "
+                    f"Paciente de {edad} años ({genero}). EPS: {eps}. Comorbilidades: {row.get('comorbilidades', '[]')}."
+                )
 
                 cur.execute(
                     """
@@ -74,19 +101,13 @@ def sembrar_dataset_oficial():
                     VALUES (%s, %s, CURRENT_DATE - INTERVAL '3 days', %s, %s, %s)
                     RETURNING id;
                     """,
-                    (
-                        db_patient_id,
-                        procedimiento,
-                        "Dr. Carlos Restrepo",
-                        f"Postoperatorio en casa. EPS: {eps}. Sin complicaciones quirúrgicas inmediatas.",
-                        protocol_tag,
-                    ),
+                    (patient_id, procedimiento, cirujano, notas, protocol_tag),
                 )
-                surgery_res = cur.fetchone()
-                surgery_id = surgery_res["id"]
+                res_s = cur.fetchone()
+                surgery_id = res_s["id"]
                 count_cirugias += 1
 
-                # Medicamentos postoperatorios de rutina
+                # Medicamentos activos
                 cur.execute(
                     """
                     INSERT INTO medications (surgery_id, name, dose, schedule, active)
@@ -97,17 +118,18 @@ def sembrar_dataset_oficial():
                     (surgery_id, surgery_id),
                 )
 
-                # Cita de control postoperatorio a los 7 días
+                # Cita de control postoperatorio a los 4 días
                 cur.execute(
                     """
                     INSERT INTO appointments (patient_id, scheduled_at, location, purpose, status)
                     VALUES (%s, NOW() + INTERVAL '4 days', 'Consultorio 302 - Edificio Médico', 'Retiro de puntos y control postoperatorio', 'scheduled');
                     """,
-                    (db_patient_id,),
+                    (patient_id,),
                 )
 
             conn.commit()
-            print(f"✅ Éxito: Se sembraron {count_pacientes} pacientes oficiales y {count_cirugias} cirugías en la base de datos.")
+            print(f"✅ Éxito: Base de datos repoblada con {count_pacientes} pacientes oficiales y {count_cirugias} cirugías vinculadas.")
+
 
 if __name__ == "__main__":
     sembrar_dataset_oficial()
