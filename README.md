@@ -164,9 +164,11 @@ sequenceDiagram
 # 1. Iniciar el contenedor de Postgres 16 con pgvector en el puerto 5433
 docker compose up -d
 
-# 2. Instalar dependencias del backend (incluyendo el grupo voice)
+# 2. Instalar dependencias del backend
 cd backend
 uv sync --all-groups
+# O si prefieres usar pip tradicional:
+# pip install -r requirements.txt
 
 # 3. Poblar la base de datos con los 40 pacientes oficiales del reto (desde los Excel)
 uv run python -m app.db.seed_official
