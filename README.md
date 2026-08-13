@@ -124,39 +124,65 @@ sequenceDiagram
 
 ### 1. Requisitos Previos
 
-- **Docker & Docker Compose** (para la base de datos Postgres con pgvector).
+- **Docker & Docker Compose** (para la base de datos Postgres 16 con `pgvector` en puerto 5433).
 - **Python 3.12** y paquete `uv` (`pip install uv` o `brew install uv`).
 - **Node.js 18+** y `npm`.
 - **Librerías de sistema**: `ffmpeg` (para Whisper) y `espeak-ng` (para Kokoro TTS en español):
+  - **macOS (Homebrew):**
+    ```bash
+    brew install ffmpeg espeak-ng
+    ```
+  - **Windows (Winget / Chocolatey):**
+    ```powershell
+    winget install ffmpeg
+    # O con Chocolatey (ejecutar como Administrador):
+    choco install ffmpeg espeak-ng
+    ```
+
+---
+
+### 2. Configuración del Archivo `.env` y Base de Datos
+
+#### A. Crear el archivo `.env` a partir de `.env.example`
+- **macOS / Linux:**
   ```bash
-  brew install ffmpeg espeak-ng
+  cp .env.example .env
+  ```
+- **Windows (PowerShell / CMD):**
+  ```cmd
+  copy .env.example .env
   ```
 
-### 2. Configuración del Entorno y Base de Datos
+#### B. Detalle de Variables Clave en `.env`:
+- **`GEMINI_API_KEY`**: Definir tu clave de API de Google Gemini (obtenible en Google AI Studio).
+- **`ADMIN_TOKEN`**: Token secreto para la consola de administración (`/admin`) y endpoints protegidos (`/api/documents`). Por defecto viene configurado como `cambiar-esto-en-local`. Al consultar `/admin` se envía en la cabecera `X-Admin-Token`.
+- **`DATABASE_URL`**: Conexión a la base de datos (`postgresql://postop:postop@localhost:5433/postop`).
+- **`VOZ=1`**: Activa la tubería de voz WebSocket (`/ws/voz`) y la síntesis TTS en el backend.
 
+#### C. Inicialización de Base de Datos y Dependencias
 ```bash
-# 1. Iniciar el contenedor de Postgres 16 con pgvector (puerto 5433)
+# 1. Iniciar el contenedor de Postgres 16 con pgvector en el puerto 5433
 docker compose up -d
 
-# 2. Configurar variables de entorno
-cp .env.example .env
-# Editar .env y definir GEMINI_API_KEY=tu_api_key_de_gemini
-
-# 3. Instalar dependencias del backend (incluyendo el grupo voice)
+# 2. Instalar dependencias del backend (incluyendo el grupo voice)
 cd backend
 uv sync --all-groups
 
-# 4. Sembrar datos del dataset oficial del concurso (o app/db/seed.sql)
+# 3. Poblar la base de datos con los 40 pacientes oficiales del reto (desde los Excel)
 uv run python -m app.db.seed_official
 ```
+
+---
 
 ### 3. Ejecución de la Batería de Pruebas Automáticas (100% Verde)
 
 ```bash
-# Ejecutar la suite completa de 424 pruebas (289 pasadas, 135 ignoradas por mocks)
+# Ejecutar la suite completa de pruebas
 cd backend
 uv run --all-groups pytest
 ```
+
+---
 
 ### 4. Pruebas Integrales de Evaluación RAG y Olvido
 
@@ -167,25 +193,56 @@ uv run python ../scripts/demo_aprender_olvidar.py
 
 # B. Evaluación del RAG sobre el Golden Set de 30 Preguntas Clínicas
 cd backend
-DATABASE_URL="postgresql://postop:postop@localhost:5433/postop" uv run python ../eval/evaluar_rag.py
+uv run python ../eval/evaluar_rag.py
 ```
+
+---
 
 ### 5. Arranque del Servidor Backend y Aplicación Frontend
 
-```bash
-# Terminal 1: Iniciar Servidor Backend con Soporte de Voz
-cd backend
-VOZ=1 DATABASE_URL="postgresql://postop:postop@localhost:5433/postop" uv run uvicorn app.main:app --port 8000
+Abre **3 pestañas de terminal** en la raíz del proyecto para iniciar los servicios:
 
-# Terminal 2: Iniciar Worker de Ingesta RAG en Segundo Plano
-cd backend
-DATABASE_URL="postgresql://postop:postop@localhost:5433/postop" uv run python -m app.workers.ingest_worker
+#### 🔹 Terminal 1: Iniciar Servidor Backend (API + Voz)
+- **macOS / Linux (Bash / Zsh):**
+  ```bash
+  cd backend
+  VOZ=1 DATABASE_URL="postgresql://postop:postop@localhost:5433/postop" uv run uvicorn app.main:app --port 8000
+  ```
+- **Windows (PowerShell):**
+  ```powershell
+  cd backend
+  $env:VOZ="1"; $env:DATABASE_URL="postgresql://postop:postop@localhost:5433/postop"; uv run uvicorn app.main:app --port 8000
+  ```
+- **Windows (Command Prompt - CMD):**
+  ```cmd
+  cd backend
+  set VOZ=1 && set DATABASE_URL=postgresql://postop:postop@localhost:5433/postop && uv run uvicorn app.main:app --port 8000
+  ```
 
-# Terminal 3: Iniciar Servidor Web de Desarrollo Frontend
-cd frontend
-npm install
-npm run dev
-```
+#### 🔹 Terminal 2: Iniciar Worker de Ingesta RAG en Segundo Plano
+- **macOS / Linux (Bash / Zsh):**
+  ```bash
+  cd backend
+  DATABASE_URL="postgresql://postop:postop@localhost:5433/postop" uv run python -m app.workers.ingest_worker
+  ```
+- **Windows (PowerShell):**
+  ```powershell
+  cd backend
+  $env:DATABASE_URL="postgresql://postop:postop@localhost:5433/postop"; uv run python -m app.workers.ingest_worker
+  ```
+- **Windows (Command Prompt - CMD):**
+  ```cmd
+  cd backend
+  set DATABASE_URL=postgresql://postop:postop@localhost:5433/postop && uv run python -m app.workers.ingest_worker
+  ```
+
+#### 🔹 Terminal 3: Iniciar Servidor Web de Desarrollo Frontend
+- **Cualquier Sistema Operativo (macOS / Linux / Windows):**
+  ```bash
+  cd frontend
+  npm install
+  npm run dev
+  ```
 
 Navega a **`http://localhost:5173/call`** en el navegador para iniciar la prueba integral de llamada postoperatoria con micrófono real.
 
