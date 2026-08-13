@@ -94,8 +94,8 @@ async def _crear_paciente(patient_id: UUID, nombre: str, preferido: str) -> None
         await conn.execute("DELETE FROM patients WHERE id = %s", (patient_id,))
         await conn.execute(
             """
-            INSERT INTO patients (id, full_name, preferred_name, birth_date, phone)
-            VALUES (%s, %s, %s, '1981-03-09', '+34 600 111 222')
+            INSERT INTO patients (id, full_name, preferred_name, documento_cc, phone)
+            VALUES (%s, %s, %s, '1012345678', '+34 600 111 222')
             """,
             (patient_id, nombre, preferido),
         )

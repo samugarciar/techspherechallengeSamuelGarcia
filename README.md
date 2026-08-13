@@ -23,7 +23,7 @@ Una consola de administración y panel de llamadas alimentan la base de conocimi
 | **Síntesis de Voz (TTS)** | **`VoiceRouter`**: Local (**Kokoro-82M**) / Premium (**ElevenLabs Flash**) | Conmutación dinámica en caliente con fallback a local y contabilidad en `tts_usage`. Kokoro local responde en **196-303 ms** a la primera frase. |
 | **Detección de Silencio (VAD)** | **Silero VAD** (ONNX en CPU) | Detección de inicio y fin de turno con confirmación de 640 ms. Permite interrupción (**barge-in**) instantánea (< 96 ms). |
 | **Seguridad y Banderas Rojas** | **Detector Determinista NegEx** (`redflags.py`) | Filtra 7 familias de alarmas médicas en **< 1 ms** sin pasar por el LLM. Fiebre `>= 38.5`, sangrado activo, dehiscencia, disnea, dolor torácico e infección interrumpen de inmediato. |
-| **Verificación de Identidad** | **Herramienta `verificar_identidad`** (Postgres) | La fecha de nacimiento expresada por el paciente se valida directamente en Postgres sin incluir la fecha real en el contexto del prompt del LLM (cero fugas de privacidad). |
+| **Verificación de Identidad** | **Herramienta `verificar_identidad`** (Postgres) | El número de Cédula de Ciudadanía (`documento_cc`) expresado por el paciente se valida en Postgres mediante normalización numérica estricta, sin arriesgar alucinaciones ni exponer datos sensibles en el prompt. |
 | **Cola de Ingesta Asíncrona** | **Postgres `FOR UPDATE SKIP LOCKED`** | Garantiza procesamiento asíncrono sin dependencias externas (Redis/Celery). Las versiones sustituidas (`superseded`) eliminan físicamente sus vectores conservando la auditoría en `document_events`. |
 | **Backend & Servidor** | **Python 3.12 + FastAPI + Uvicorn** | Asincronía completa, gestión de WebSockets en `/ws/voz` y eventos SSE en vivo (`/api/documents/events`). |
 | **Frontend Web App** | **React + Vite + TypeScript + Tailwind + shadcn/ui** | Tres interfaces integradas: Consola de Administración (`/admin`), Llamada en Vivo (`/call`) y Historial (`/calls`). |
@@ -79,36 +79,42 @@ sequenceDiagram
     autonumber
     actor P as Paciente / Usuario
     participant WS as WebSocket (/ws/voz)
-    participant VAD as Detector VAD / STT
-    participant RF as Red Flags (NegEx)
-    participant AG as Agente Clínico (LLM)
-    participant DB as Postgres (pgvector)
+    participant VAD as Detector VAD / STT (Whisper)
+    participant RF as Red Flags (Detector NegEx)
+    participant AG as Agente Clínico (Gemini 2.5)
+    participant DB as Postgres (pgvector + FTS)
     participant TTS as Motor TTS (VoiceRouter)
 
     P->>WS: Conexión WebSocket (call_id)
     WS->>P: Evento "listo" + Saludo AI Act (Audio Streaming)
-    Note over P,WS: "Buenos días. Soy un asistente automatizado..."
-    
-    P->>WS: Audio de voz ("Soy María, nací el 14 de mayo de 1990")
-    WS->>VAD: Procesamiento de PCM16 (Silero + Whisper)
+    Note over P,WS: "Buenos días. Hablo con el paciente..."
+
+    P->>WS: Audio de voz ("Sí, habla con ella, mi cédula es 1012345678")
+    WS->>VAD: Procesamiento PCM16 (Silero VAD + Whisper small)
     VAD->>RF: Transcripción de usuario
     
-    RF->>DB: Exec `verificar_identidad('1990-05-14')`
-    DB-->>RF: Coincidencia Exitosa (True)
-    
     RF->>RF: Evaluación de Banderas Rojas (< 1 ms)
-    
-    alt ¿Bandera Roja Detectada? (e.g. "Tengo 38.5 de fiebre")
+
+    alt ¿Bandera Roja Detectada? (e.g. "Tengo 38.5 de fiebre y pus")
         RF->>DB: Inserción de turno "system" en call_turns
         RF->>WS: Interrupción inmediata + Protocolo de Alarma
         WS->>TTS: Sintetizar instrucciones de urgencia
-        TTS-->>P: Reproducción de Audio de Alarma & Cierre
-    else Seguimiento Normal o Consulta RAG
-        RF->>AG: Generación de respuesta con herramientas
-        AG->>DB: Búsqueda RAG Híbrida en retrievable_chunks
-        DB-->>AG: Fragmentos de conocimiento con citas
-        AG->>TTS: Streaming de respuesta por frases
-        TTS-->>P: Reproducción de Audio en vivo
+        TTS-->>P: Reproducción de Audio de Alarma & Cierre de llamada
+    else Proceso Normal de Conversación
+        RF->>AG: Enviar transcripción al Agente
+        AG->>DB: Tool Call: verificar_identidad(documento_dicho="1012345678")
+        DB-->>AG: Resultado: {coincide: true, paciente: "..."}
+
+        alt ¿Identidad NO Verificada? (Cédula Incorrecta)
+            AG->>TTS: "Los datos no coinciden. Volveré a llamar luego."
+            TTS-->>P: Reproducción de aviso de seguridad & Colgado
+        else Identidad Verificada (Seguimiento Postoperatorio)
+            AG->>DB: Tool Call: buscar_protocolo("¿cuándo puedo bañarme?")
+            Note over DB: Búsqueda Híbrida Vectorial (bge-m3) + FTS en retrievable_chunks
+            DB-->>AG: Fragmentos de protocolo con citas clínicas
+            AG->>TTS: Streaming de respuesta por oraciones
+            TTS-->>P: Reproducción de Audio en vivo
+        end
     end
 ```
 
@@ -140,8 +146,8 @@ cp .env.example .env
 cd backend
 uv sync --all-groups
 
-# 4. Sembrar datos iniciales de pacientes sintéticos
-docker exec -i postop_db psql -U postop -d postop < app/db/seed.sql
+# 4. Sembrar datos del dataset oficial del concurso (o app/db/seed.sql)
+uv run python -m app.db.seed_official
 ```
 
 ### 3. Ejecución de la Batería de Pruebas Automáticas (100% Verde)
@@ -187,6 +193,7 @@ Navega a **`http://localhost:5173/call`** en el navegador para iniciar la prueba
 
 ## 📄 Documentación de Referencia
 
+- **[Informe Final de la Solución (Google Docs)](https://docs.google.com/document/d/16hzJBmPZSF56jsglDQzQfcD03emEPNz3KgYkTRxIWho/edit?usp=sharing)**: Documento oficial de informe final con justificaciones de arquitectura, evidencias, prompts y modelo seleccionado.
 - **[BITACORA.md](BITACORA.md)**: Historial completo de desarrollo, justificación de las 10 decisiones clínicas y evolución del proyecto.
 - **[eval/guion_demo.md](eval/guion_demo.md)**: Guía paso a paso para la demostración en vivo.
 - **[eval/eval_rag_results.md](eval/eval_rag_results.md)**: Reporte cuantitativo de Recall@k y latencias del motor RAG.

@@ -93,8 +93,8 @@ async def _paciente(pool):  # noqa: F811
         await conn.execute("DELETE FROM patients WHERE id = %s", (PACIENTE,))
         await conn.execute(
             """
-            INSERT INTO patients (id, full_name, preferred_name, birth_date, phone)
-            VALUES (%s, 'Ana Lucía Serrano Vidal', 'Ana', '1981-03-09', '+34 600 111 222')
+            INSERT INTO patients (id, full_name, preferred_name, documento_cc, phone)
+            VALUES (%s, 'Ana Lucía Serrano Vidal', 'Ana', '1012345678', '+34 600 111 222')
             """,
             (PACIENTE,),
         )
@@ -374,7 +374,7 @@ async def test_el_modelo_no_puede_pedir_datos_de_otro_paciente(
 
     resultado = json.loads(llm.historiales[-1][-1].content)
     assert resultado["nombre_completo"] == "Ana Lucía Serrano Vidal"
-    assert resultado["fecha_nacimiento_en_palabras"] == "9 de marzo de 1981"
+    assert resultado["nombre_preferido"] == "Ana"
 
 
 # ---------------------------------------------------------------------------

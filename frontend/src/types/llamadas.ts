@@ -25,7 +25,7 @@ export interface Paciente {
   nombre: string
   /** Nombre por el que se le llama en voz alta. Puede faltar. */
   preferred_name: string | null
-  fecha_nacimiento: string | null
+  documento_cc: string | null
   cirugia: CirugiaResumen | null
   medicacion_activa: number
   proxima_cita: string | null

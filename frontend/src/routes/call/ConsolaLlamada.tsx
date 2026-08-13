@@ -1,4 +1,4 @@
-import { Hand, MicOff, PhoneOff, Unplug } from 'lucide-react'
+import { Clock, Hand, MicOff, PhoneOff, ShieldCheck, Unplug, UserCheck } from 'lucide-react'
 
 import { MODO_SIMULADO } from '@/api'
 import { interrumpirAgenteSimulado, simularCaidaDeVoz } from '@/api/llamadas/mock'
@@ -96,7 +96,7 @@ export function ConsolaLlamada({ llamada }: { llamada: LlamadaVoz }) {
               titulo={`Evidencia citada (${conversacion.citas.length})`}
               descripcion="Cada afirmación clínica, con su origen."
             />
-            <PanelCitas citas={conversacion.citas} />
+            <PanelCitas citas={conversacion.citas} fase={conversacion.fase} />
           </Tarjeta>
 
           <EstadoDelCanal llamada={llamada} />
@@ -110,32 +110,59 @@ function Cabecera({ llamada }: { llamada: LlamadaVoz }) {
   const { paciente, medidores, microfono } = llamada
 
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-      <div className="min-w-0">
-        <h1 className="truncate text-xl font-semibold tracking-tight text-tinta">
-          {paciente?.nombre ?? 'Llamada en curso'}
-        </h1>
-        <p className="mt-0.5 truncate text-[0.8125rem] text-tinta-tenue">
-          {paciente?.cirugia?.nombre ?? 'Sin cirugía registrada'}
-          {paciente?.cirugia ? ` · ${diasDesde(paciente.cirugia.dias_desde)}` : ''}
-        </p>
+    <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 rounded-2xl border border-borde bg-superficie p-4 shadow-sm">
+      <div className="flex items-center gap-3.5 min-w-0">
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-primario/30 bg-primario-suave text-primario">
+          <UserCheck className="size-5" />
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-lg font-bold tracking-tight text-tinta">
+              {paciente?.nombre ?? 'Llamada en curso'}
+            </h1>
+            {paciente?.documento_cc ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-borde bg-superficie-tenue px-2 py-0.5 font-mono text-[0.6875rem] font-medium text-tinta-tenue">
+                <ShieldCheck className="size-3 text-verde" />
+                CC: {paciente.documento_cc}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-0.5 truncate text-[0.8125rem] text-tinta-tenue">
+            {paciente?.cirugia?.nombre ?? 'Sin cirugía registrada'}
+            {paciente?.cirugia ? ` · ${diasDesde(paciente.cirugia.dias_desde)}` : ''}
+          </p>
+        </div>
       </div>
 
-      <p className="numerico ml-auto text-lg font-medium tabular-nums text-tinta">
-        {formatearDuracion(medidores.segundos)}
-      </p>
+      {/* Temporizador y Controles de Llamada */}
+      <div className="flex items-center gap-3.5 ml-auto">
+        {/* Indicador de tiempo en vivo */}
+        <div className="flex items-center gap-2.5 rounded-xl border border-borde bg-superficie-tenue/80 px-3.5 py-1.5 shadow-2xs">
+          <span className="relative flex size-2.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rojo opacity-75" />
+            <span className="relative inline-flex size-2.5 rounded-full bg-rojo" />
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Clock className="size-3.5 text-tinta-tenue" aria-hidden />
+            <span className="numerico text-base font-bold tabular-nums tracking-wide text-tinta">
+              {formatearDuracion(medidores.segundos)}
+            </span>
+          </div>
+        </div>
 
-      {microfono === 'inactivo' && !MODO_SIMULADO ? (
-        <span className="flex items-center gap-1.5 rounded-full border border-borde bg-superficie-tenue px-2.5 py-1 text-xs text-tinta-tenue">
-          <MicOff className="size-3.5" aria-hidden />
-          Micrófono cerrado
-        </span>
-      ) : null}
+        {microfono === 'inactivo' && !MODO_SIMULADO ? (
+          <span className="hidden items-center gap-1.5 rounded-full border border-borde bg-superficie-tenue px-2.5 py-1 text-xs text-tinta-tenue sm:inline-flex">
+            <MicOff className="size-3.5" aria-hidden />
+            Micrófono cerrado
+          </span>
+        ) : null}
 
-      <Boton variante="destructivo" onClick={llamada.colgar}>
-        <PhoneOff />
-        Colgar
-      </Boton>
+        {/* Botón de Colgar Llamada */}
+        <Boton variante="destructivo" tamano="md" onClick={llamada.colgar} className="gap-2 font-semibold shadow-xs">
+          <PhoneOff className="size-4" />
+          Colgar llamada
+        </Boton>
+      </div>
     </div>
   )
 }

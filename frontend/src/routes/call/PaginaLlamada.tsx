@@ -218,8 +218,8 @@ function NotaLegal() {
       <ShieldCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden />
       <span>
         En su primera intervención el agente declara que es un sistema automatizado, como exige el
-        AI Act para las interacciones con IA, y verifica la identidad con nombre y fecha de
-        nacimiento contra la ficha antes de hablar de nada clínico.
+        AI Act para las interacciones con IA, y verifica la identidad con nombre y número de
+        cédula contra la ficha antes de hablar de nada clínico.
       </span>
     </p>
   )

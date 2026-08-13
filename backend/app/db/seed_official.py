@@ -3,14 +3,14 @@ Poblador de base de datos con el Dataset Oficial Colombiano del Reto.
 
 Une `perfiles_pacientes_co.xlsx` y `perfiles_clinicos_pacientes_silver_contest.xlsx`
 para repoblar las tablas `patients`, `surgeries`, `medications` y `appointments`
-con los datos exactos del concurso y fechas de nacimiento calculadas válidas.
+con los datos exactos del concurso y números de documento de ciudadanía.
 """
 
-import sys
-import datetime
 import pathlib
-import psycopg
+import sys
+
 import pandas as pd
+import psycopg
 from psycopg.rows import dict_row
 
 DATASET_DIR = pathlib.Path("/Users/samug/Downloads/ParticipantArtifacts-main/dataset")
@@ -64,21 +64,16 @@ def sembrar_dataset_oficial():
                 edad = int(row["edad"])
                 genero = str(row.get("genero", "M"))
 
-                # Fecha de nacimiento calculada a partir de la edad
-                mes = (idx % 12) + 1
-                dia = (idx % 28) + 1
-                birth_date = datetime.date(2026 - edad, mes, dia)
-
                 phone = f"+57 3{idx:02d} {doc_cc[:3]} {doc_cc[3:7]}"
                 preferred_name = nombre.split()[0]
 
                 cur.execute(
                     """
-                    INSERT INTO patients (full_name, birth_date, phone, preferred_name)
+                    INSERT INTO patients (full_name, documento_cc, phone, preferred_name)
                     VALUES (%s, %s, %s, %s)
                     RETURNING id;
                     """,
-                    (nombre, birth_date, phone, preferred_name),
+                    (nombre, doc_cc, phone, preferred_name),
                 )
                 res_p = cur.fetchone()
                 patient_id = res_p["id"]

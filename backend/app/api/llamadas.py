@@ -139,7 +139,7 @@ async def pacientes_pendientes() -> dict[str, Any]:
     async with connection() as conn:
         cur = await conn.execute(
             """
-            SELECT p.id, p.full_name, p.preferred_name, p.birth_date,
+            SELECT p.id, p.full_name, p.preferred_name, p.documento_cc,
                    s.procedure_name, s.performed_at,
                    (CURRENT_DATE - s.performed_at) AS dias_desde,
                    (SELECT count(*) FROM medications m
@@ -166,7 +166,7 @@ async def pacientes_pendientes() -> dict[str, Any]:
                 "id": str(f["id"]),
                 "nombre": f["full_name"],
                 "preferred_name": f["preferred_name"],
-                "fecha_nacimiento": f["birth_date"].isoformat() if f["birth_date"] else None,
+                "documento_cc": f["documento_cc"],
                 "cirugia": {
                     "nombre": f["procedure_name"],
                     "fecha": f["performed_at"].isoformat(),

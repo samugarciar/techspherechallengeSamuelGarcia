@@ -97,7 +97,7 @@ class Intervencion:
 
 GUION = (
     Intervencion(
-        "Sí, sí, soy yo. Nací el doce de abril de mil novecientos setenta y ocho.",
+        "Sí, sí, soy yo. Mi cédula es uno cero tres cuatro cinco seis siete ocho nueve cero.",
         "verificación de identidad contra los datos vivos",
     ),
     Intervencion(

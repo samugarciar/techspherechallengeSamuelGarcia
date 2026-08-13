@@ -295,7 +295,7 @@ class ServidorLlamadasSimulado {
         id: 'aaaaaaaa-0000-0000-0000-000000000001',
         nombre: 'María Elena Restrepo Gómez',
         preferred_name: 'María',
-        fecha_nacimiento: '1978-04-12',
+        documento_cc: '1012345678',
         cirugia: {
           nombre: 'Apendicectomía laparoscópica',
           fecha: iso(-3),
@@ -309,7 +309,7 @@ class ServidorLlamadasSimulado {
         id: 'aaaaaaaa-0000-0000-0000-000000000002',
         nombre: 'Jorge Andrés Villalba Ruiz',
         preferred_name: 'Jorge',
-        fecha_nacimiento: '1965-11-30',
+        documento_cc: '1023456789',
         cirugia: {
           nombre: 'Colecistectomía laparoscópica',
           fecha: iso(-7),
@@ -323,7 +323,7 @@ class ServidorLlamadasSimulado {
         id: 'aaaaaaaa-0000-0000-0000-000000000003',
         nombre: 'Lucía Fernanda Ospina Marín',
         preferred_name: 'Lucía',
-        fecha_nacimiento: '1992-07-03',
+        documento_cc: '1034567890',
         cirugia: {
           nombre: 'Herniorrafia inguinal derecha',
           fecha: iso(-1),
@@ -353,8 +353,8 @@ class ServidorLlamadasSimulado {
       turnos: turnosDe([
         ['agente', 'Buenos días. Le llamo del servicio de cirugía para el seguimiento de su operación. Soy un sistema automatizado, no una persona. ¿Hablo con Jorge Andrés Villalba?', [], { llm: 410, tts: 232 }],
         ['paciente', 'Sí, dígame.', [], { stt: 318 }],
-        ['agente', 'Para confirmar su identidad, ¿me dice su fecha de nacimiento?', [], { llm: 288, tts: 190 }],
-        ['paciente', 'Treinta de noviembre del sesenta y cinco.', [], { stt: 402 }],
+        ['agente', 'Para confirmar su identidad, ¿me dice su número de cédula?', [], { llm: 288, tts: 190 }],
+        ['paciente', 'Uno cero dos tres cuatro cinco seis siete ocho nueve.', [], { stt: 402 }],
         [
           'agente',
           'Correcto. Hace tres días le hicieron una colecistectomía. ¿Cómo tiene el dolor del cero al diez?',
@@ -391,8 +391,8 @@ class ServidorLlamadasSimulado {
       turnos: turnosDe([
         ['agente', 'Buenas tardes. Le llamo del servicio de cirugía para el seguimiento de su operación. Soy un sistema automatizado. ¿Hablo con Lucía Fernanda Ospina?', [], { llm: 398, tts: 226 }],
         ['paciente', 'Sí, soy yo.', [], { stt: 264 }],
-        ['agente', 'Para confirmar, ¿su fecha de nacimiento?', [], { llm: 244, tts: 172 }],
-        ['paciente', 'Tres de julio del noventa y dos.', [], { stt: 341 }],
+        ['agente', 'Para confirmar, ¿su número de cédula?', [], { llm: 244, tts: 172 }],
+        ['paciente', 'Uno cero tres cuatro cinco seis siete ocho nueve cero.', [], { stt: 341 }],
         [
           'agente',
           'Correcto. Ayer le pusieron la malla inguinal. ¿Cómo está la herida? ¿Le sale algún líquido o sangre?',

@@ -147,7 +147,7 @@ def test_el_saludo_declara_que_es_una_maquina() -> None:
         "Nunca diagnostiques",
         "Nunca ajustes medicación",
         "buscar_protocolo",
-        "fecha de nacimiento",
+        "cédula",
     ],
 )
 def test_las_reglas_duras_siguen_en_el_prompt(regla: str) -> None:

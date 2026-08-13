@@ -164,21 +164,21 @@ def esquemas(claves_survey: list[str]) -> list[dict[str, Any]]:
         {
             "name": "verificar_identidad",
             "description": (
-                "Verifica la identidad del paciente comparando la fecha de nacimiento "
-                "dicha por el paciente con los registros del sistema. Devuelve coincide=true/false."
+                "Verifica la identidad del paciente comparando la cédula o número de documento "
+                "dicho por el paciente con los registros del sistema. Devuelve coincide=true/false."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "fecha_nacimiento_dicha": {
+                    "documento_dicho": {
                         "type": "string",
                         "description": (
-                            "La fecha de nacimiento expresada por el paciente (ejemplo: "
-                            "'12 de abril de 1978' o '1978-04-12')."
+                            "El número de cédula o documento expresado por el paciente "
+                            "(ejemplo: '1012345678' o '1.012.345.678')."
                         ),
                     }
                 },
-                "required": ["fecha_nacimiento_dicha"],
+                "required": ["documento_dicho"],
             },
         },
         {
@@ -329,7 +329,7 @@ class Herramientas:
                 return await self._paciente()
             case "verificar_identidad":
                 return await self._verificar_identidad(
-                    str(args.get("fecha_nacimiento_dicha", ""))
+                    str(args.get("documento_dicho", "") or args.get("fecha_nacimiento_dicha", ""))
                 )
             case "obtener_cirugia":
                 return await self._cirugia()
@@ -352,7 +352,7 @@ class Herramientas:
         async with connection() as conn:
             cur = await conn.execute(
                 """
-                SELECT p.full_name, p.preferred_name, p.birth_date,
+                SELECT p.full_name, p.preferred_name, p.documento_cc,
                        (SELECT min(scheduled_at) FROM appointments a
                          WHERE a.patient_id = p.id AND a.status = 'scheduled'
                            AND a.scheduled_at >= now()) AS proxima_cita,
@@ -378,32 +378,23 @@ class Herramientas:
             "lugar_cita": fila["lugar_cita"],
         }
 
-    async def _verificar_identidad(self, fecha_dicha: str) -> dict[str, Any]:
+    async def _verificar_identidad(self, documento_dicho: str) -> dict[str, Any]:
         async with connection() as conn:
             cur = await conn.execute(
-                "SELECT birth_date FROM patients WHERE id = %s",
+                "SELECT documento_cc FROM patients WHERE id = %s",
                 (self.contexto.patient_id,),
             )
             fila = await cur.fetchone()
-        if fila is None or not fila["birth_date"]:
+        if fila is None or not fila["documento_cc"]:
             return {"coincide": False, "error": "paciente no encontrado"}
 
-        bd = fila["birth_date"]
-        texto_bd_iso = bd.isoformat()
-        texto_bd_palabras = fecha_en_palabras(bd) or ""
+        doc_db = "".join(filter(str.isdigit, str(fila["documento_cc"])))
+        doc_dicho = "".join(filter(str.isdigit, str(documento_dicho)))
 
-        import unicodedata
-        dicha_norm = "".join(c for c in unicodedata.normalize("NFD", fecha_dicha.lower()) if unicodedata.category(c) != "Mn").strip()
-        palabras_norm = "".join(c for c in unicodedata.normalize("NFD", texto_bd_palabras.lower()) if unicodedata.category(c) != "Mn").strip()
-
-        year_str = str(bd.year)
-        day_str = str(bd.day)
-        month_name = _MESES[bd.month - 1]
-
-        coincide = (
-            texto_bd_iso in dicha_norm
-            or palabras_norm in dicha_norm
-            or (year_str in dicha_norm and (day_str in dicha_norm or month_name in dicha_norm))
+        coincide = bool(
+            doc_db
+            and doc_dicho
+            and (doc_db == doc_dicho or doc_db in doc_dicho or doc_dicho in doc_db)
         )
 
         if coincide:
@@ -418,7 +409,7 @@ class Herramientas:
         return {
             "coincide": False,
             "instruccion": (
-                "La fecha de nacimiento NO coincide con la del sistema. No des ningún "
+                "El número de cédula NO coincide con el del sistema. No des ningún "
                 "dato personal ni clínico, di amablemente que volverás a llamar en otro "
                 "momento y despídete."
             ),
@@ -507,14 +498,14 @@ class Herramientas:
 
         await registrar_traza(
             span="retrieval",
-            duration_ms=resultado.latencias.get("total", 0),
+            duration_ms=resultado.ms.get("total", 0),
             call_id=self.contexto.call_id,
             metadata={
                 "consulta": consulta,
                 "enriquecida": enriquecida,
                 "hay_evidencia": resultado.hay_evidencia,
                 "fragmentos_count": len(resultado.fragmentos),
-                "ms": resultado.latencias,
+                "ms": resultado.ms,
             },
         )
 

@@ -58,26 +58,6 @@ function diasTexto(paciente: Paciente): string {
   return `Hace ${dias} días`
 }
 
-function fechaEnLetra(iso: string | null): string {
-  if (!iso) return 'no consta'
-  const [ano, mes, dia] = iso.split('-')
-  const meses = [
-    'enero',
-    'febrero',
-    'marzo',
-    'abril',
-    'mayo',
-    'junio',
-    'julio',
-    'agosto',
-    'septiembre',
-    'octubre',
-    'noviembre',
-    'diciembre',
-  ]
-  const indice = Number(mes) - 1
-  return `${Number(dia)} de ${meses[indice] ?? mes} de ${ano}`
-}
 
 /**
  * Pregunta específica del procedimiento. Es la mitad visible de la decisión 1:
@@ -124,11 +104,11 @@ function apertura(paciente: Paciente): PasoGuion[] {
     { clase: 'paciente', texto: 'Sí, soy yo.', espera: 1.1 },
     {
       clase: 'agente',
-      texto: 'Gracias. Para confirmar su identidad, ¿me dice su fecha de nacimiento?',
+      texto: 'Gracias. Para confirmar su identidad, ¿me dice su número de cédula o documento?',
     },
     {
       clase: 'paciente',
-      texto: fechaEnLetra(paciente.fecha_nacimiento) + '.',
+      texto: (paciente.documento_cc ?? '1012345678') + '.',
       espera: 1.4,
     },
   ]

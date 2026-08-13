@@ -8,10 +8,10 @@ BEGIN;
 
 TRUNCATE patients, surgeries, medications, appointments, calls, call_turns RESTART IDENTITY CASCADE;
 
-INSERT INTO patients (id, full_name, preferred_name, birth_date, phone) VALUES
-  ('aaaaaaaa-0000-0000-0000-000000000001', 'María Elena Restrepo Gómez', 'María', '1978-04-12', '+57 300 111 2233'),
-  ('aaaaaaaa-0000-0000-0000-000000000002', 'Jorge Andrés Villalba Ruiz',  'Jorge', '1965-11-30', '+57 301 444 5566'),
-  ('aaaaaaaa-0000-0000-0000-000000000003', 'Lucía Fernanda Ospina Marín', 'Lucía', '1992-07-03', '+57 302 777 8899');
+INSERT INTO patients (id, full_name, preferred_name, documento_cc, phone) VALUES
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'María Elena Restrepo Gómez', 'María', '1012345678', '+57 300 111 2233'),
+  ('aaaaaaaa-0000-0000-0000-000000000002', 'Jorge Andrés Villalba Ruiz',  'Jorge', '1023456789', '+57 301 444 5566'),
+  ('aaaaaaaa-0000-0000-0000-000000000003', 'Lucía Fernanda Ospina Marín', 'Lucía', '1034567890', '+57 302 777 8899');
 
 INSERT INTO surgeries (id, patient_id, procedure_name, performed_at, surgeon, protocol_tag, discharge_notes) VALUES
   ('bbbbbbbb-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001',

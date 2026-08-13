@@ -150,7 +150,7 @@ CREATE INDEX document_events_doc_idx ON document_events (document_id, created_at
 CREATE TABLE patients (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     full_name       text        NOT NULL,
-    birth_date      date,
+    documento_cc    text,
     phone           text,
     preferred_name  text,
     created_at      timestamptz NOT NULL DEFAULT now()

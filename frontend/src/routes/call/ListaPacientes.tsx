@@ -1,4 +1,4 @@
-import { CalendarClock, Phone, PhoneOff, Pill, UserRound } from 'lucide-react'
+import { CalendarClock, IdCard, Phone, PhoneOff, Pill, UserRound } from 'lucide-react'
 
 import { Boton } from '@/components/ui/boton'
 import { Esqueleto } from '@/components/ui/superficie'
@@ -70,7 +70,15 @@ function FilaPaciente({
         </span>
 
         <div className="min-w-[13rem] flex-1">
-          <p className="font-medium leading-tight text-tinta">{paciente.nombre}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium leading-tight text-tinta">{paciente.nombre}</p>
+            {paciente.documento_cc ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-borde bg-superficie px-2 py-0.5 font-mono text-[0.6875rem] font-semibold text-tinta">
+                <IdCard className="size-3 text-primario" aria-hidden />
+                CC: {paciente.documento_cc}
+              </span>
+            ) : null}
+          </div>
           <p className="mt-0.5 text-[0.8125rem] leading-snug text-tinta-tenue">
             {paciente.cirugia?.nombre ?? 'Sin cirugía registrada'}
           </p>

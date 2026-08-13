@@ -50,7 +50,7 @@ export function normalizarPaciente(bruto: unknown): Paciente {
     // publica tal cual en vez de traducirlo, la pantalla no se queda muda.
     nombre: texto(p.nombre ?? p.full_name, 'Paciente sin nombre'),
     preferred_name: textoOpcional(p.preferred_name),
-    fecha_nacimiento: textoOpcional(p.fecha_nacimiento ?? p.birth_date),
+    documento_cc: textoOpcional(p.documento_cc),
     cirugia: normalizarCirugia(p.cirugia),
     medicacion_activa: numero(p.medicacion_activa),
     proxima_cita: textoOpcional(p.proxima_cita),

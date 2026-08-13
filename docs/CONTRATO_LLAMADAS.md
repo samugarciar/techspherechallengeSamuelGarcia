@@ -21,7 +21,7 @@ No son negociables sin preguntarle:
    instrucción de urgencia del protocolo, **confirma que el paciente la ha
    entendido**, registra el escalamiento y cierra la llamada. Seguir preguntando por
    la dieta cuando alguien sangra es indefendible.
-3. **Verificación de identidad con nombre y fecha de nacimiento**, contra los datos
+3. **Verificación de identidad con nombre y número de cédula (documento_cc)**, contra los datos
    vivos de la base, antes de entrar en materia clínica.
 4. **El agente se presenta como sistema automatizado** en su primera intervención.
    Lo exige el AI Act para interacciones con IA.
@@ -38,7 +38,7 @@ Pacientes con seguimiento pendiente, para la pantalla de inicio de llamada.
 ```json
 { "pacientes": [
   { "id": "uuid", "nombre": "María Fernández", "preferred_name": "María",
-    "fecha_nacimiento": "1978-04-12",
+    "documento_cc": "1012345678",
     "cirugia": { "nombre": "Apendicectomía laparoscópica", "fecha": "2026-08-05",
                  "dias_desde": 3 },
     "medicacion_activa": 2, "proxima_cita": "2026-08-20",
