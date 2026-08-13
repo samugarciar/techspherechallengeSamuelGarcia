@@ -253,6 +253,8 @@ Navega a **`http://localhost:5173/call`** en el navegador para iniciar la prueba
 ## 📄 Documentación de Referencia
 
 - **[Informe Final de la Solución (Google Docs)](https://docs.google.com/document/d/16hzJBmPZSF56jsglDQzQfcD03emEPNz3KgYkTRxIWho/edit?usp=sharing)**: Documento oficial de informe final con justificaciones de arquitectura, evidencias, prompts y modelo seleccionado.
+- **[Video de Demostración (YouTube)](https://youtu.be/yBPI40SCVyM?si=Nq1tNdYaZKdmAXiq)**: Video demostrativo de funcionamiento del agente de voz y la interfaz en vivo.
+- **[Gráfico de Flujo de Funcionamiento (Google Drive)](https://drive.google.com/file/d/1_O6Lgp8r-f-AlH8iMOcFtNmEW8FtBSR-/view?usp=share_link)**: Diagrama de arquitectura y flujo secuencial detallado.
 - **[BITACORA.md](BITACORA.md)**: Historial completo de desarrollo, justificación de las 10 decisiones clínicas y evolución del proyecto.
 - **[eval/guion_demo.md](eval/guion_demo.md)**: Guía paso a paso para la demostración en vivo.
 - **[eval/eval_rag_results.md](eval/eval_rag_results.md)**: Reporte cuantitativo de Recall@k y latencias del motor RAG.
